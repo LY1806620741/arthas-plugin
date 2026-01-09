@@ -1,0 +1,1 @@
+echo "maven will install java"

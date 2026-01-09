@@ -1,0 +1,8 @@
+{
+    "id": "arthas",
+    "version": "1.0.0",
+    "name": "Local Arthas Installer",
+    "description": "本地自定义Feature，给容器自动安装最新版Arthas诊断工具",
+    "options": {},
+    "installsAfter": []
+}
