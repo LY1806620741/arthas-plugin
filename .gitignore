@@ -1,2 +1,5 @@
 .vscode
 arthas-plugin/target
+arthas-plugin/.arthas
+arthas-output
+arthas

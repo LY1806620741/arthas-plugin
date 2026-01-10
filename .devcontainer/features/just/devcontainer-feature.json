@@ -1,0 +1,8 @@
+{
+    "id": "just",
+    "version": "1.0.0",
+    "name": "Local just Installer",
+    "description": "",
+    "options": {},
+    "installsAfter": []
+}
