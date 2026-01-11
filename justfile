@@ -22,13 +22,14 @@ arthas *args:
 
 # 快速启动arthas 附加 math-game
 start-arthas *args:
-  java -jar arthas-plugin/.arthas/arthas-boot.jar {{args}} $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
-
+  # arthas-boot.jar是启动器，-cp无法引入jar
+  # java -cp arthas-plugin/.arthas/plugins/arthas-plugin-0.0.1.jar:arthas-plugin/.arthas/arthas-boot.jar com.taobao.arthas.boot.Bootstrap {{args}} $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
+  just arthas {{args}} $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
 #打包为arthas插件
 package-plugin:
   cd arthas-plugin && mvn clean package -DskipTests
-  mkdir -p arthas-plugin/.arthas/plugins
-  cp -f arthas-plugin/target/arthas-plugin-*.jar arthas-plugin/.arthas/plugins/
+  mkdir -p ~/.arthas/lib/{{version}}/arthas/
+  cp -f -p arthas-plugin/target/arthas-plugin-*.jar ~/.arthas/lib/{{version}}/arthas/
 
 # 启动arthas mock命令测试
 start-mock-test:
