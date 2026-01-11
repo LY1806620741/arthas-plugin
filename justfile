@@ -24,12 +24,12 @@ arthas *args:
 start-arthas *args:
   # arthas-boot.jar是启动器，-cp无法引入jar
   # java -cp arthas-plugin/.arthas/plugins/arthas-plugin-0.0.1.jar:arthas-plugin/.arthas/arthas-boot.jar com.taobao.arthas.boot.Bootstrap {{args}} $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
-  just arthas {{args}} $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
+  just arthas {{args}} -v $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
 #打包为arthas插件
 package-plugin:
   cd arthas-plugin && mvn clean package -DskipTests
-  mkdir -p ~/.arthas/lib/{{version}}/arthas/
-  cp -f -p arthas-plugin/target/arthas-plugin-*.jar ~/.arthas/lib/{{version}}/arthas/
+  cp -f -p arthas-plugin/target/arthas-plugin-*.jar arthas-plugin/.arthas/
+  cd arthas-plugin/.arthas && (test -f arthas-core.old.jar || mv arthas-core.jar arthas-core.old.jar) && mkdir -p temp && cd temp && unzip -qo ../arthas-core.old.jar && unzip -qo ../arthas-plugin-0.0.1.jar && cd .. && zip -qr arthas-core.jar temp/* && rm -rf temp && echo -e "\033[32m✅ 合并完成！生成文件: arthas-core.jar\033[0m"
 
 # 启动arthas mock命令测试
 start-mock-test:
