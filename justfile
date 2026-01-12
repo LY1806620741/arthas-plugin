@@ -35,4 +35,4 @@ package-plugin:
 start-mock-test:
   # com.taobao.arthas.core.command.BuiltinCommandPack#initCommands
   # just start-arthas -c \"vmtool --action getInstances --className com.taobao.arthas.core.command.BuiltinCommandPack --express \'instances.{commands.{name}}\' -x 2\"
-  just start-arthas -c \"mock\"
+  just start-arthas -c \"mock -b demo.MathGame primeFactors returnObj 'return null' 'params[0]>1'\"
