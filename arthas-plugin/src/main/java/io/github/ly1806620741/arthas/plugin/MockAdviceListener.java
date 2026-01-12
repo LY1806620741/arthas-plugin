@@ -1,7 +1,9 @@
 package io.github.ly1806620741.arthas.plugin;
 
-// import com.alibaba.arthas.deps.org.slf4j.Logger;
-// import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
+import java.time.LocalDateTime;
+
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.taobao.arthas.core.advisor.AccessPoint;
 import com.taobao.arthas.core.advisor.Advice;
 import com.taobao.arthas.core.advisor.AdviceListenerAdapter;
@@ -12,14 +14,12 @@ import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.ThreadLocalWatch;
 
-import java.time.LocalDateTime;
-
 /**
  * @author beiwei30 on 29/11/2016.
  */
 class MockAdviceListener extends AdviceListenerAdapter {
 
-    // private static final Logger logger = LoggerFactory.getLogger(WatchAdviceListener.class);
+    private static final Logger logger = LoggerFactory.getLogger(MockAdviceListener.class);
     private final ThreadLocalWatch threadLocalWatch = new ThreadLocalWatch();
     private MockCommand command;
     private CommandProcess process;
@@ -108,7 +108,7 @@ class MockAdviceListener extends AdviceListenerAdapter {
                 }
             }
         } catch (Throwable e) {
-            // logger.warn("watch failed.", e);
+            logger.warn("watch failed.", e);
             process.end(-1, "watch failed, condition is: " + command.getConditionExpress() + ", express is: "
                     + command.getExpress() + ", " + e.getMessage() + ", visit " + LogUtil.loggingFile()
                     + " for more details.");
