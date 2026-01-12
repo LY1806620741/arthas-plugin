@@ -1,60 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>io.github.ly1806620741</groupId>
-    <artifactId>arthas-plugin</artifactId>
-    <version>0.0.1</version>
+    <parent>
+        <groupId>io.github.ly1806620741</groupId>
+        <artifactId>arthas-plugin-parent</artifactId>
+        <version>0.0.1</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
 
+    <artifactId>arthas-plugin</artifactId>
     <name>arthas-plugin</name>
-    <!-- FIXME change it to the project's website -->
     <url>https://github.com/LY1806620741/arthas-plugin</url>
 
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>8</maven.compiler.source>
-        <maven.compiler.target>8</maven.compiler.target>
-        <arthas.version>4.1.4</arthas.version>
         <final.jar.name>arthas-core.jar</final.jar.name>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.junit</groupId>
-                <artifactId>junit-bom</artifactId>
-                <version>6.0.2</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <dependency>
             <groupId>com.alibaba.middleware</groupId>
             <artifactId>cli</artifactId>
-            <version>1.0.4</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.taobao.arthas</groupId>
             <artifactId>arthas-core</artifactId>
-            <version>${arthas.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.taobao.arthas</groupId>
             <artifactId>arthas-model</artifactId>
-            <version>${arthas.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.alibaba.arthas</groupId>
             <artifactId>arthas-repackage-logger</artifactId>
-            <version>0.0.19</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -66,12 +48,12 @@
 
     <build>
         <plugins>
+            <!-- 下载arthas-core.jar + 用项目class覆盖 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.6.0</version>
                 <executions>
-                    <!-- 步骤1：自动下载官方原生arthas-core-4.1.4.jar到target目录 -->
+                    <!-- 自动下载官方原生arthas-core-4.1.4.jar到target目录 -->
                     <execution>
                         <id>copy-arthas-core</id>
                         <phase>package</phase>
@@ -90,7 +72,7 @@
                             </artifactItems>
                         </configuration>
                     </execution>
-                    <!-- 步骤2：核心操作 - 用项目编译后的class覆盖下载的arthas-core.jar -->
+                    <!-- 用项目编译后的class覆盖下载的arthas-core.jar -->
                     <execution>
                         <id>update-arthas-core-with-classes</id>
                         <phase>package</phase>

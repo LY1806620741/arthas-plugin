@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.ly1806620741</groupId>
+    <artifactId>arthas-plugin-parent</artifactId>
+    <version>0.0.1</version>
+    <packaging>pom</packaging> <!-- 聚合工程 -->
+    <name>arthas-plugin-parent</name>
+    <url>https://github.com/LY1806620741/arthas-plugin</url>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <arthas.version>4.1.4</arthas.version>
+        <cli.version>1.0.4</cli.version>
+        <arthas-logger.version>0.0.19</arthas-logger.version>
+        <junit.version>6.0.2</junit.version>
+        <maven-dependency-plugin.version>3.6.0</maven-dependency-plugin.version>
+        <final.jar.name>arthas-core.jar</final.jar.name>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.taobao.arthas</groupId>
+                <artifactId>arthas-core</artifactId>
+                <version>${arthas.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.taobao.arthas</groupId>
+                <artifactId>arthas-model</artifactId>
+                <version>${arthas.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.arthas</groupId>
+                <artifactId>arthas-repackage-logger</artifactId>
+                <version>${arthas-logger.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.middleware</groupId>
+                <artifactId>cli</artifactId>
+                <version>${cli.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <modules>
+        <module>arthas-plugin</module>
+    </modules>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>${maven-dependency-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.8.1</version>
+                    <configuration>
+                        <source>${maven.compiler.source}</source>
+                        <target>${maven.compiler.target}</target>
+                        <encoding>${project.build.sourceEncoding}</encoding>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
