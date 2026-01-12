@@ -29,7 +29,7 @@ start-arthas *args:
 package-plugin:
   cd arthas-plugin && mvn clean package -DskipTests
   cp -f -p arthas-plugin/target/arthas-plugin-*.jar arthas-plugin/.arthas/
-  cd arthas-plugin/.arthas && (test -f arthas-core.old.jar || mv arthas-core.jar arthas-core.old.jar) && mkdir -p temp && cd temp && unzip -qo ../arthas-core.old.jar && unzip -qo ../arthas-plugin-0.0.1.jar '*' -x 'META-INF/**' && cd .. && zip -qr arthas-core.jar temp/* && rm -rf temp && echo -e "\033[32m✅ 合并完成！生成文件: arthas-core.jar\033[0m"
+  cd arthas-plugin/.arthas && (test -f arthas-core.old.jar || mv arthas-core.jar arthas-core.old.jar) && mkdir -p temp && cd temp && unzip -qo ../arthas-core.old.jar && unzip -qo ../arthas-plugin-0.0.1.jar '*' -x 'META-INF/**' && zip -qr ../arthas-core.jar ./* && cd - && rm -rf temp && echo -e "\033[32m✅ 合并完成！生成文件: arthas-core.jar\033[0m"
 
 # 启动arthas mock命令测试
 start-mock-test:
