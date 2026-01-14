@@ -15,12 +15,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
-        <arthas.version>4.1.4</arthas.version>
+        <arthas.version>4.1.5</arthas.version>
         <cli.version>1.0.4</cli.version>
         <arthas-logger.version>0.0.19</arthas-logger.version>
         <junit.version>5.14.2</junit.version>
-        <maven-dependency-plugin.version>3.6.0</maven-dependency-plugin.version>
-        <final.jar.name>arthas-core.jar</final.jar.name>
+        <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
     </properties>
 
     <dependencyManagement>

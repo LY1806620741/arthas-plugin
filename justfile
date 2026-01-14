@@ -2,7 +2,7 @@
 default:
   just --list
 
-version  := "4.1.4"
+version  := "4.1.5"
 
 # 加载arthas源码到本地
 get-arthas-code:
@@ -10,7 +10,7 @@ get-arthas-code:
 
 # 安装arthas
 install-arthas:
-  test -d arthas-plugin/.arthas || ((test -f /tmp/arthas-packaging-{{version}}-bin.zip && wget https://repo1.maven.org/maven2/com/taobao/arthas/arthas-packaging/{{version}}/arthas-packaging-{{version}}-bin.zip -P /tmp) && unzip /tmp/arthas-packaging-{{version}}-bin.zip -d arthas-plugin/.arthas)
+  test -d arthas-plugin/.arthas || ((test -f /tmp/arthas-packaging-{{version}}-bin.zip || wget https://repo1.maven.org/maven2/com/taobao/arthas/arthas-packaging/{{version}}/arthas-packaging-{{version}}-bin.zip -P /tmp) && unzip /tmp/arthas-packaging-{{version}}-bin.zip -d arthas-plugin/.arthas)
 
 # 快速启动math-game
 start-math:
@@ -27,7 +27,7 @@ start-arthas *args:
   just arthas {{args}} -v $(ps -ef |grep math-game | grep -v grep |awk '{print $2}')
 #打包为arthas插件
 package-plugin:
-  cd arthas-plugin && mvn clean package -DskipTests
+  mvn clean package -DskipTests
   cp -f -p arthas-plugin/target/arthas-core.jar arthas-plugin/.arthas/
   
 # 启动arthas mock命令测试
