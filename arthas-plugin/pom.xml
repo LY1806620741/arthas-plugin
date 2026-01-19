@@ -17,6 +17,7 @@
 
     <properties>
         <final.jar.name>arthas-core.jar</final.jar.name>
+        <arthas.deps.package>com.alibaba.arthas.deps</arthas.deps.package>
     </properties>
 
     <dependencies>
@@ -64,6 +65,29 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <relocations>
+                                <!-- https://github.com/hengyunabc/arthas-repackage-deps -->
+                                <relocation>
+                                    <pattern>com.alibaba.fastjson2</pattern>
+                                    <shadedPattern>${arthas.deps.package}.com.alibaba.fastjson2</shadedPattern>
+                                </relocation>
+                            </relocations>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- 下载arthas-core.jar + 用项目class覆盖 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -141,7 +165,8 @@
                                     update="true">
                                     <fileset dir="${project.build.outputDirectory}">
                                         <exclude name="META-INF/MANIFEST.MF" />
-                                        <exclude name="io/github/ly1806620741/arthas/ArthasJarMerger.class" />
+                                        <exclude
+                                            name="io/github/ly1806620741/arthas/ArthasJarMerger.class" />
                                     </fileset>
                                 </zip>
                             </target>

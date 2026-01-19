@@ -35,3 +35,6 @@ start-mock-test:
   # com.taobao.arthas.core.command.BuiltinCommandPack#initCommands
   # just start-arthas -c \"vmtool --action getInstances --className com.taobao.arthas.core.command.BuiltinCommandPack --express \'instances.{commands.{name}}\' -x 2\"
   just start-arthas -c \"mock -b demo.MathGame primeFactors returnObj 'return null' 'params[0]>1'\"
+
+compare-class:
+  cd arthas-plugin/target && mkdir compare && unzip -p arthas-bin.zip arthas-core.jar > arthas-core.old.jar && unzip -j arthas-core.old.jar com/taobao/arthas/core/view/*.class -d ./compare
