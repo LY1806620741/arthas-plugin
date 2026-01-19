@@ -28,4 +28,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: arthas-core-custom
-          path: arthas-plugin/target/arthas-core.jar
+          path: |
+            arthas-plugin/target/*.jar
