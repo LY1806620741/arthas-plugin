@@ -133,18 +133,6 @@
                                     <includes>**/arthas-core.jar</includes>
                                 </artifactItem>
                             </artifactItems>
-                            <exec>
-                                <executable>jar</executable>
-                                <arguments>
-                                    <argument>-uf</argument>
-                                    <argument>0</argument>
-                                    <argument>
-                                        ${project.build.directory}/arthas-bin/lib/arthas-core.jar</argument>
-                                    <argument>-C</argument>
-                                    <argument>${project.build.outputDirectory}</argument>
-                                    <argument>.</argument>
-                                </arguments>
-                            </exec>
                         </configuration>
                     </execution>
                 </executions>
@@ -154,6 +142,26 @@
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.2.0</version>
                 <executions>
+                    <!-- <execution>
+                        <id>replace-version-in-class</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <replaceregexp
+                                    file="${project.build.outputDirectory}/io/github/ly1806620741/arthas/ArthasJarMerger.class"
+                                    encoding="UTF8"
+                                    flags="g"
+                                    byline="false">
+                                    <regexp pattern="\$\{arthas\.version\}" />
+                                    <substitution expression="${arthas.version}" />
+                                </replaceregexp>
+                                <echo message="✅ 已替换 class 文件中的版本为: ${arthas.version}" />
+                            </target>
+                        </configuration>
+                    </execution> -->
                     <execution>
                         <phase>package</phase>
                         <goals>
@@ -169,6 +177,7 @@
                                             name="io/github/ly1806620741/arthas/ArthasJarMerger.class" />
                                     </fileset>
                                 </zip>
+                                <echo message="✅ 已合并文件到 arthas-core.jar ${arthas.version}" />
                             </target>
                         </configuration>
                     </execution>
@@ -189,5 +198,11 @@
                 </configuration>
             </plugin>
         </plugins>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
     </build>
 </project>

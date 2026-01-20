@@ -3,14 +3,35 @@ package io.github.ly1806620741.arthas;
 import java.io.*;
 import java.nio.file.Files;
 import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Properties;
+import java.util.Set;
+import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 
 public class ArthasJarMerger {
     private static final String ARTHAS_JAR_PATH = "arthas-core.jar";
     private static final String BAK_PATH = ARTHAS_JAR_PATH + ".bak";
-    private static final String SELF_CLASS_NAME = ArthasJarMerger.class.getName().replace(".", "/") + ".class";;
+    private static final String SELF_CLASS_NAME = ArthasJarMerger.class.getName().replace(".", "/") + ".class";
+    private static final String TARGET_SPEC_VERSION = readArthasVersionFromConfig();
+
+    private static String readArthasVersionFromConfig() {
+        try (InputStream is = ArthasJarMerger.class.getClassLoader().getResourceAsStream("version.properties")) {
+            if (is == null) {
+                System.err.println("⚠️ 未找到version.properties配置文件");
+                return null;
+            }
+            Properties props = new Properties(); // 单独创建，不放入try-with-resources
+            props.load(is);
+            return props.getProperty("arthas.spec.version", "").trim();
+        } catch (IOException e) {
+            System.err.println("⚠️ 读取version.properties失败: " + e.getMessage());
+            return null;
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         try {
@@ -23,6 +44,12 @@ public class ArthasJarMerger {
             System.err.println("❌ 找不到文件: " + ARTHAS_JAR_PATH);
             return;
         }
+
+        if (!checkManifestVersion(targetJar)) {
+            System.err.println("❌ 目标JAR包版本不符合要求，需要Specification-Version: " + TARGET_SPEC_VERSION);
+            return;
+        }
+
         // 只备份一次，存在bak则跳过
         File bakFile = new File(BAK_PATH);
         if (!bakFile.exists()) {
@@ -50,9 +77,37 @@ public class ArthasJarMerger {
         }
     }
 
+    private static boolean checkManifestVersion(File jarFile) {
+        try (JarFile jf = new JarFile(jarFile)) {
+            // 获取MANIFEST.MF文件
+            Manifest manifest = jf.getManifest();
+            if (manifest == null) {
+                System.err.println("❌ 目标JAR包中未找到MANIFEST.MF文件");
+                return false;
+            }
+            // 获取Manifest的主属性
+            Attributes mainAttributes = manifest.getMainAttributes();
+            // 读取Specification-Version属性值
+            String specVersion = mainAttributes.getValue("Specification-Version");
+
+            if (specVersion == null) {
+                System.err.println("❌ MANIFEST.MF中未找到Specification-Version属性");
+                return false;
+            }
+
+            System.out.println("ℹ️ 检测到目标JAR包版本: Specification-Version = " + specVersion);
+            // 对比版本号是否匹配
+            return TARGET_SPEC_VERSION.equals(specVersion);
+        } catch (IOException e) {
+            System.err.println("❌ 读取MANIFEST.MF时发生错误: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
     private static void mergeClass(File targetJar, File sourceJar) throws Exception {
         File tempJar = new File(targetJar.getAbsolutePath() + ".tmp");
-        
+
         // 1. 先扫描 sourceJar，确定哪些文件是我们要覆盖进去的
         Set<String> sourceEntryNames = new HashSet<>();
         try (JarFile srcJf = new JarFile(sourceJar)) {
@@ -66,25 +121,25 @@ public class ArthasJarMerger {
                 }
             }
         }
-    
+
         // 2. 开始构建新的 JAR
         try (JarOutputStream jos = new JarOutputStream(new FileOutputStream(tempJar));
-             JarFile targetJf = new JarFile(targetJar);
-             JarFile srcJf = new JarFile(sourceJar)) {
-    
+                JarFile targetJf = new JarFile(targetJar);
+                JarFile srcJf = new JarFile(sourceJar)) {
+
             // A. 搬运 targetJar，但跳过那些在 sourceJar 中已存在的文件
             Enumeration<JarEntry> targetEntries = targetJf.entries();
             while (targetEntries.hasMoreElements()) {
                 JarEntry entry = targetEntries.nextElement();
                 String name = entry.getName();
-                
+
                 if (sourceEntryNames.contains(name)) {
                     System.out.println("♻️ 发现同名类，将使用 source 中的版本覆盖: " + name);
                     continue; // 跳过旧版本，不写入 jos
                 }
                 copyEntry(targetJf, entry, jos);
             }
-    
+
             // B. 将 sourceJar 中的新类全部写入
             for (String name : sourceEntryNames) {
                 JarEntry entry = srcJf.getJarEntry(name);
@@ -94,7 +149,7 @@ public class ArthasJarMerger {
                 }
             }
         }
-    
+
         // 3. 替换原始文件
         if (targetJar.delete()) {
             if (!tempJar.renameTo(targetJar)) {
@@ -104,7 +159,7 @@ public class ArthasJarMerger {
             throw new IOException("无法覆盖原 JAR 文件，请检查文件是否被占用");
         }
     }
-    
+
     private static void copyEntry(JarFile jar, JarEntry entry, JarOutputStream jos) throws IOException {
         jos.putNextEntry(new JarEntry(entry.getName()));
         try (InputStream in = jar.getInputStream(entry)) {
