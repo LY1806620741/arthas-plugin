@@ -51,41 +51,55 @@ public class ArthasJarMerger {
     }
 
     private static void mergeClass(File targetJar, File sourceJar) throws Exception {
-        // 1. 创建一个临时文件
         File tempJar = new File(targetJar.getAbsolutePath() + ".tmp");
         
-        // 使用 try-with-resources 自动关闭资源
-        try (JarOutputStream jos = new JarOutputStream(new FileOutputStream(tempJar));
-             JarFile targetJf = new JarFile(targetJar);
-             JarFile srcJf = new JarFile(sourceJar)) {
-    
-            // 2. 将原 targetJar 的所有旧内容搬运到临时 JAR
-            Enumeration<JarEntry> targetEntries = targetJf.entries();
-            while (targetEntries.hasMoreElements()) {
-                JarEntry entry = targetEntries.nextElement();
-                // 复制每一个旧 Entry 到新流
-                copyEntry(targetJf, entry, jos);
-            }
-    
-            // 3. 合并 sourceJar 中的新类文件
+        // 1. 先扫描 sourceJar，确定哪些文件是我们要覆盖进去的
+        Set<String> sourceEntryNames = new HashSet<>();
+        try (JarFile srcJf = new JarFile(sourceJar)) {
             Enumeration<JarEntry> srcEntries = srcJf.entries();
             while (srcEntries.hasMoreElements()) {
                 JarEntry entry = srcEntries.nextElement();
                 String name = entry.getName();
-                
-                // 过滤逻辑
+                // 满足过滤条件的文件才加入“覆盖名单”
                 if (name.endsWith(".class") && !name.startsWith("META-INF/") && !name.equals(SELF_CLASS_NAME)) {
-                    // 注意：如果 target 原本已有同名类，此处 copy 会导致 ZIP 重复项异常
-                    // 建议增加判断逻辑：若 targetEntries 已包含此 name 则跳过或处理覆盖
-                    copyEntry(srcJf, entry, jos);
-                    System.out.println("📥 已合并新类: " + name);
+                    sourceEntryNames.add(name);
                 }
             }
-        } // 此时临时文件已完成新老目录的重新构建
+        }
     
-        // 4. 替换原始文件
+        // 2. 开始构建新的 JAR
+        try (JarOutputStream jos = new JarOutputStream(new FileOutputStream(tempJar));
+             JarFile targetJf = new JarFile(targetJar);
+             JarFile srcJf = new JarFile(sourceJar)) {
+    
+            // A. 搬运 targetJar，但跳过那些在 sourceJar 中已存在的文件
+            Enumeration<JarEntry> targetEntries = targetJf.entries();
+            while (targetEntries.hasMoreElements()) {
+                JarEntry entry = targetEntries.nextElement();
+                String name = entry.getName();
+                
+                if (sourceEntryNames.contains(name)) {
+                    System.out.println("♻️ 发现同名类，将使用 source 中的版本覆盖: " + name);
+                    continue; // 跳过旧版本，不写入 jos
+                }
+                copyEntry(targetJf, entry, jos);
+            }
+    
+            // B. 将 sourceJar 中的新类全部写入
+            for (String name : sourceEntryNames) {
+                JarEntry entry = srcJf.getJarEntry(name);
+                if (entry != null) {
+                    copyEntry(srcJf, entry, jos);
+                    System.out.println("📥 已写入新类(覆盖/新增): " + name);
+                }
+            }
+        }
+    
+        // 3. 替换原始文件
         if (targetJar.delete()) {
-            tempJar.renameTo(targetJar);
+            if (!tempJar.renameTo(targetJar)) {
+                throw new IOException("重命名临时文件失败");
+            }
         } else {
             throw new IOException("无法覆盖原 JAR 文件，请检查文件是否被占用");
         }
