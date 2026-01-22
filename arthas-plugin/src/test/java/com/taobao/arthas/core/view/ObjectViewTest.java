@@ -26,53 +26,25 @@ public class ObjectViewTest {
 
     @Test
     public void jacocoFilter() throws Exception {
-        RuntimeData runtimeData = new RuntimeData();
-        LoggerRuntime runtime = new LoggerRuntime();
-        runtime.startup(runtimeData);
-        Instrumenter instrumenter = new Instrumenter(runtime);
-
-        Class<?> targetClass = ObjectViewTest.class;
-        String classResource = "/" + targetClass.getName().replace(".", "/") + ".class";
-        byte[] originalBytes;
-        try (InputStream is = targetClass.getResourceAsStream(classResource);
-                ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[1024];
-            int len;
-            while ((len = is.read(buf)) != -1) {
-                bos.write(buf, 0, len);
-            }
-            originalBytes = bos.toByteArray();
+        Instrumenter instrumenter = new Instrumenter(new LoggerRuntime());
+        String name = ObjectViewTest.class.getName();
+        byte[] bytes;
+        try (InputStream is = getClass().getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
+            bytes = instrumenter.instrument(is.readAllBytes(), name);
         }
 
-        byte[] enhancedBytes = instrumenter.instrument(originalBytes, targetClass.getName());
+        Class<?> clazz = new ClassLoader() {
+            public Class<?> load(String n, byte[] b) { return defineClass(n, b, 0, b.length); }
+        }.load(name, bytes);
 
-        Class<?> enhancedClass = new ClassLoader(null) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                // 验证：检查增强后的类是否包含$jacoco字段（JaCoCo注入的核心字段）
-                if (name.equals(targetClass.getName())) {
-                    Class<?> enhancedCls = defineClass(name, enhancedBytes, 0, enhancedBytes.length);
-                    try {
-                        Field jacocoField = enhancedCls.getDeclaredField("$jacocoData");
-                        Assertions.assertNotNull(jacocoField,"jacoco enhance error");
-                    } catch (NoSuchFieldException e) {
-                        Assertions.fail("jacoco enhance error", e);
-                    }
-                    return enhancedCls;
-                }
-                return ClassLoader.getSystemClassLoader().loadClass(name);
-            }
-        }.loadClass(targetClass.getName());
+        java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        f.setAccessible(true);
+        Object obj = ((sun.misc.Unsafe) f.get(null)).allocateInstance(clazz);
 
-        Object enhancedObj = enhancedClass.getDeclaredConstructor().newInstance();
+        ObjectView view = new ObjectView(obj, 3);
 
-        ObjectView objectView = new ObjectView(enhancedObj, 3);
-        String draw = objectView.draw();
-        Assertions.assertNotNull(draw);
-        Assertions.assertTrue(!draw.contains("jacoco"));
+        Assertions.assertFalse(view.draw().contains("jacoco"), "应忽略jacoco字段");
         GlobalOptions.ignoreJacocoField = false;
-        String draw2 = objectView.draw();
-        Assertions.assertNotNull(draw2);
-        Assertions.assertTrue(draw2.contains("jacoco"));
+        Assertions.assertTrue(view.draw().contains("jacoco"), "应包含jacoco字段");
     }
 }
