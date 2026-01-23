@@ -1,8 +1,20 @@
 package io.github.ly1806620741.arthas.plugin;
 
+import static com.taobao.arthas.core.command.klass100.RetransformCommand.logger;
+
 import java.util.ArrayList;
 import java.util.List;
 
+import com.alibaba.bytekit.asm.MethodProcessor;
+import com.alibaba.bytekit.asm.binding.Binding;
+import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
+import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
+import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
+import com.alibaba.bytekit.asm.location.Location;
+import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
+import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
+import com.taobao.arthas.core.advisor.AdviceListenerManager;
+import com.taobao.arthas.core.advisor.SpyInterceptors.SpyInterceptor1;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
@@ -144,12 +156,44 @@ public class MockCommand extends RetransformCommand {
         // 缓存ognl
 
         // 增强字节
+        // DefaultInterceptorClassParser defaultInterceptorClassParser = new DefaultInterceptorClassParser();
+        // List<InterceptorProcessor> interceptorProcessors = defaultInterceptorClassParser.parse(OgnlMockAdvice.class);
+        // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode, groupLocationFilter);
 
+        // for (InterceptorProcessor interceptor : interceptorProcessors) {
+        //     try {
+        //         List<Location> locations = interceptor.process(methodProcessor);
+        //         for (Location location : locations) {
+        //             if (location instanceof MethodInsnNodeWare) {
+        //                 MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
+        //                 MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
+        //             }
+        //         }
+
+        //     } catch (Throwable e) {
+        //         logger.error("enhancer error, class: {}, method: {}, interceptor: {}", classNode.name, methodNode.name,
+        //                 interceptor.getClass().getName(), e);
+        //     }
+        // }
         // 管理mockClass
 
     }
 
-    class OgnlMockAdvice {
+    static class OgnlMockAdvice {
+
+        @AtInvoke(name = "", inline = true, whenComplete = false, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
+                "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
+                "java.lang.Long", "java.lang.Double" })
+        public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
+                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj) {
+        }
+
+        @AtInvoke(name = "", inline = true, whenComplete = true, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
+                "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
+                "java.lang.Long", "java.lang.Double" })
+        public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz,
+                @Binding.InvokeInfo String invokeInfo, @Binding.Return Object returnObj) {
+        }
 
     }
 }
