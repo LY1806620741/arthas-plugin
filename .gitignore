@@ -1,4 +1,5 @@
 .vscode
+.idea
 arthas-plugin/target
 arthas-plugin/.arthas
 arthas-plugin/.arthas-source

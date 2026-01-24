@@ -1,40 +1,37 @@
 package com.taobao.arthas.core.view;
 
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.TimeZone;
 
 import org.jacoco.core.instr.Instrumenter;
 import org.jacoco.core.runtime.LoggerRuntime;
-import org.jacoco.core.runtime.RuntimeData;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import com.taobao.arthas.common.IOUtils;
 import com.taobao.arthas.core.GlobalOptions;
-import com.taobao.arthas.core.util.StringUtils;
 
 /**
- * @author ralf0131 2018-07-10 10:55.
+ * 增加的case
  */
 public class ObjectViewTest {
 
+    /**
+     * https://github.com/alibaba/arthas/issues/2778
+     * @throws Exception
+     */
     @Test
     public void jacocoFilter() throws Exception {
         Instrumenter instrumenter = new Instrumenter(new LoggerRuntime());
         String name = ObjectViewTest.class.getName();
         byte[] bytes;
         try (InputStream is = getClass().getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
-            bytes = instrumenter.instrument(is.readAllBytes(), name);
+            bytes = instrumenter.instrument(IOUtils.getBytes(is), name);
         }
 
         Class<?> clazz = new ClassLoader() {
-            public Class<?> load(String n, byte[] b) { return defineClass(n, b, 0, b.length); }
+            public Class<?> load(String n, byte[] b) {
+                return defineClass(n, b, 0, b.length);
+            }
         }.load(name, bytes);
 
         java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
