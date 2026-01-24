@@ -1,22 +1,13 @@
 package io.github.ly1806620741.arthas.plugin;
 
-import static com.taobao.arthas.core.command.klass100.RetransformCommand.logger;
-
 import java.util.ArrayList;
 import java.util.List;
 
-import com.alibaba.bytekit.asm.MethodProcessor;
 import com.alibaba.bytekit.asm.binding.Binding;
-import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
 import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
-import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
-import com.alibaba.bytekit.asm.location.Location;
-import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
-import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
-import com.taobao.arthas.core.advisor.AdviceListenerManager;
-import com.taobao.arthas.core.advisor.SpyInterceptors.SpyInterceptor1;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
+import com.taobao.arthas.core.command.klass100.RetransformCommand.RetransformEntry;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.util.StringUtils;
 import com.taobao.middleware.cli.annotations.Argument;
@@ -38,7 +29,7 @@ import ognl.OgnlException;
         "  4. 修改方法入参: mock com.demo.UserService updateUser -b '[0, {\"id\":1,\"name\":\"modify\"}]'\n" +
         "  5. 清除指定mock: mock com.demo.UserService getUserById --clear\n" +
         "  6. 清除全部mock: mock --clear-all\n")
-public class MockCommand extends RetransformCommand {
+public class MockCommand {
 
     private String classPattern;
     private String methodPattern;
@@ -50,6 +41,8 @@ public class MockCommand extends RetransformCommand {
     private boolean isRegEx = false;
     private int numberOfLimit = 100;
     private boolean verbose = false;
+
+    private static volatile List<RetransformEntry> retransformEntries = RetransformCommand.allRetransformEntries();
 
     private static volatile List<String> mockClass = new ArrayList<String>();
 
@@ -156,24 +149,28 @@ public class MockCommand extends RetransformCommand {
         // 缓存ognl
 
         // 增强字节
-        // DefaultInterceptorClassParser defaultInterceptorClassParser = new DefaultInterceptorClassParser();
-        // List<InterceptorProcessor> interceptorProcessors = defaultInterceptorClassParser.parse(OgnlMockAdvice.class);
-        // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode, groupLocationFilter);
+        // DefaultInterceptorClassParser defaultInterceptorClassParser = new
+        // DefaultInterceptorClassParser();
+        // List<InterceptorProcessor> interceptorProcessors =
+        // defaultInterceptorClassParser.parse(OgnlMockAdvice.class);
+        // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode,
+        // groupLocationFilter);
 
         // for (InterceptorProcessor interceptor : interceptorProcessors) {
-        //     try {
-        //         List<Location> locations = interceptor.process(methodProcessor);
-        //         for (Location location : locations) {
-        //             if (location instanceof MethodInsnNodeWare) {
-        //                 MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
-        //                 MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
-        //             }
-        //         }
+        // try {
+        // List<Location> locations = interceptor.process(methodProcessor);
+        // for (Location location : locations) {
+        // if (location instanceof MethodInsnNodeWare) {
+        // MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
+        // MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
+        // }
+        // }
 
-        //     } catch (Throwable e) {
-        //         logger.error("enhancer error, class: {}, method: {}, interceptor: {}", classNode.name, methodNode.name,
-        //                 interceptor.getClass().getName(), e);
-        //     }
+        // } catch (Throwable e) {
+        // logger.error("enhancer error, class: {}, method: {}, interceptor: {}",
+        // classNode.name, methodNode.name,
+        // interceptor.getClass().getName(), e);
+        // }
         // }
         // 管理mockClass
 
