@@ -22,6 +22,58 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-model</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-spy</artifactId>
+            <version>${arthas.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-common</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-vmtool</artifactId>
+            <version>${arthas.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>bytekit-core</artifactId>
+            <version>0.1.4</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <version>1.18.3</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-memorycompiler</artifactId>
+            <version>${arthas.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-tunnel-client</artifactId>
+            <version>${arthas.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.middleware</groupId>
+            <artifactId>termd-core</artifactId>
+            <version>1.1.7.15</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>com.alibaba.middleware</groupId>
             <artifactId>cli</artifactId>
             <scope>provided</scope>
@@ -32,14 +84,16 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.taobao.arthas</groupId>
-            <artifactId>arthas-common</artifactId>
+            <groupId>com.taobao.text</groupId>
+            <artifactId>text-ui</artifactId>
+            <version>0.0.3</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.taobao.arthas</groupId>
-            <artifactId>arthas-model</artifactId>
+            <groupId>com.fifesoft</groupId>
+            <artifactId>rsyntaxtextarea</artifactId>
             <scope>provided</scope>
+            <version>3.3.4</version>
         </dependency>
         <dependency>
             <groupId>com.alibaba.arthas</groupId>
@@ -57,9 +111,9 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>bytekit-core</artifactId>
-            <version>0.1.4</version>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>1.18.3</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -71,6 +125,24 @@
             <groupId>org.jacoco</groupId>
             <artifactId>org.jacoco.core</artifactId>
             <version>0.8.14</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>math-game</artifactId>
+            <version>${arthas.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.taobao.arthas</groupId>
+            <artifactId>arthas-mcp-server</artifactId>
+            <version>${arthas.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.21.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -1,15 +1,37 @@
 package io.github.ly1806620741.arthas.plugin;
 
+import java.lang.instrument.Instrumentation;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
+import com.alibaba.bytekit.asm.MethodProcessor;
 import com.alibaba.bytekit.asm.binding.Binding;
+import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
 import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
+import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
+import com.alibaba.bytekit.asm.location.Location;
+import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
+import com.alibaba.bytekit.utils.AsmUtils;
+import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
+import com.taobao.arthas.core.GlobalOptions;
+import com.taobao.arthas.core.advisor.AdviceListenerManager;
 import com.taobao.arthas.core.command.Constants;
+import com.taobao.arthas.core.command.express.ExpressException;
+import com.taobao.arthas.core.command.express.ExpressFactory;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
 import com.taobao.arthas.core.command.klass100.RetransformCommand.RetransformEntry;
+import com.taobao.arthas.core.command.model.EnhancerModelFactory;
+import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
+import com.taobao.arthas.core.shell.session.Session;
+import com.taobao.arthas.core.util.LogUtil;
+import com.taobao.arthas.core.util.SearchUtils;
 import com.taobao.arthas.core.util.StringUtils;
+import com.taobao.arthas.core.util.affect.EnhancerAffect;
+import com.taobao.arthas.core.util.matcher.Matcher;
 import com.taobao.middleware.cli.annotations.Argument;
 import com.taobao.middleware.cli.annotations.DefaultValue;
 import com.taobao.middleware.cli.annotations.Description;
@@ -17,6 +39,7 @@ import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
 
+import net.bytebuddy.matcher.StringMatcher;
 import ognl.Ognl;
 import ognl.OgnlException;
 
@@ -29,13 +52,14 @@ import ognl.OgnlException;
         "  4. 修改方法入参: mock com.demo.UserService updateUser -b '[0, {\"id\":1,\"name\":\"modify\"}]'\n" +
         "  5. 清除指定mock: mock com.demo.UserService getUserById --clear\n" +
         "  6. 清除全部mock: mock --clear-all\n")
-public class MockCommand {
+public class MockCommand extends AnnotatedCommand {
+
+    private static final Logger logger = LoggerFactory.getLogger(MockCommand.class);
 
     private String classPattern;
     private String methodPattern;
     private String express;
     private String conditionExpress;
-    private String ognl;
     private boolean isBefore = false;
     private Integer sizeLimit = 10 * 1024 * 1024;
     private boolean isRegEx = false;
@@ -137,42 +161,73 @@ public class MockCommand {
         return verbose;
     }
 
+    protected boolean isConditionMet(String conditionExpress, OgnlMockAdvice advice) throws ExpressException {
+        return StringUtils.isEmpty(conditionExpress)
+                || ExpressFactory.threadLocalExpress(advice).is(conditionExpress);
+    }
+
+    protected Object getExpressionResult(String express, OgnlMockAdvice advice) throws ExpressException {
+        return ExpressFactory.threadLocalExpress(advice).get(express);
+    }
+
     @Override
     public void process(CommandProcess process) {
-        try {
-            Object expression = Ognl.parseExpression(ognl);
-        } catch (OgnlException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+        Session session = process.session();
+        if (!session.tryLock()) {
+            String msg = "someone else is enhancing classes, pls. wait.";
+            process.appendResult(EnhancerModelFactory.create(null, false, msg));
+            process.end(-1, msg);
+            return;
         }
+        int lock = session.getLock();
+        try {
+            Instrumentation inst = session.getInstrumentation();
 
-        // 缓存ognl
+            // 1. 创建匹配器
+            Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(getClassPattern(), isRegEx());
+            Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(getMethodPattern(), isRegEx());
 
-        // 增强字节
-        // DefaultInterceptorClassParser defaultInterceptorClassParser = new
-        // DefaultInterceptorClassParser();
-        // List<InterceptorProcessor> interceptorProcessors =
-        // defaultInterceptorClassParser.parse(OgnlMockAdvice.class);
-        // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode,
-        // groupLocationFilter);
+            // 2. 搜寻类 方法
+            Set<Class<?>> matchingClasses = GlobalOptions.isDisableSubClass
+                    ? SearchUtils.searchClass(inst, classNameMatcher)
+                    : SearchUtils.searchSubClass(inst, SearchUtils.searchClass(inst, classNameMatcher));
 
-        // for (InterceptorProcessor interceptor : interceptorProcessors) {
-        // try {
-        // List<Location> locations = interceptor.process(methodProcessor);
-        // for (Location location : locations) {
-        // if (location instanceof MethodInsnNodeWare) {
-        // MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
-        // MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
-        // }
-        // }
+            // 3. 缓存ognl
+            // 4. 增强代码
+            // 5. 加入arthas类transform 增强
+            // if(AsmUtils.containsMethodInsnNode(methodNode,
+            // Type.getInternalName(OgnlMockAdvice.class), "onInvoke")) {
 
-        // } catch (Throwable e) {
-        // logger.error("enhancer error, class: {}, method: {}, interceptor: {}",
-        // classNode.name, methodNode.name,
-        // interceptor.getClass().getName(), e);
-        // }
-        // }
-        // 管理mockClass
+            // // 增强字节
+            // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode,
+            // groupLocationFilter);
+            // DefaultInterceptorClassParser parser = new DefaultInterceptorClassParser();
+            // List<InterceptorProcessor> interceptors = parser.parse(OgnlMockAdvice.class);
+            // for (InterceptorProcessor interceptor : interceptorProcessors) {
+            // try {
+            // List<Location> locations = interceptor.process(methodProcessor);
+            // for (Location location : locations) {
+            // if (location instanceof MethodInsnNodeWare) {
+            // MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
+            // MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
+            // }
+            // }
+
+            // } catch (Throwable e) {
+            // logger.error("enhancer error, class: {}, method: {}, interceptor: {}",
+            // classNode.name, methodNode.name, interceptor.getClass().getName(), e);
+            // }
+            // }
+            // }
+            // // 管理mockClass
+
+            // }
+        } catch (Throwable e) {
+            logger.warn("mock failed.", e);
+            process.end(-1, "mock failed, condition is: " + this.getConditionExpress() + ", express is: "
+                    + this.getExpress() + ", " + e.getMessage() + ", visit " + LogUtil.loggingFile()
+                    + " for more details.");
+        }
 
     }
 
