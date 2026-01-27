@@ -2,6 +2,7 @@ package io.github.ly1806620741.arthas.plugin;
 
 import java.lang.instrument.Instrumentation;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -15,9 +16,15 @@ import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
 import com.alibaba.bytekit.asm.location.Location;
 import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
 import com.alibaba.bytekit.utils.AsmUtils;
+import com.alibaba.deps.org.objectweb.asm.ClassReader;
+import com.alibaba.deps.org.objectweb.asm.Opcodes;
+import com.alibaba.deps.org.objectweb.asm.tree.ClassNode;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
+import com.alibaba.fastjson2.internal.asm.ASMUtils;
 import com.taobao.arthas.core.GlobalOptions;
+import com.taobao.arthas.core.advisor.Advice;
 import com.taobao.arthas.core.advisor.AdviceListenerManager;
+import com.taobao.arthas.core.advisor.Enhancer;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
@@ -60,13 +67,17 @@ public class MockCommand extends AnnotatedCommand {
     private String methodPattern;
     private String express;
     private String conditionExpress;
-    private boolean isBefore = false;
+    private boolean isAfter = false;
+    private boolean isException = false;
+    private boolean clear = false;
+    private boolean clearAll = false;
     private Integer sizeLimit = 10 * 1024 * 1024;
     private boolean isRegEx = false;
     private int numberOfLimit = 100;
     private boolean verbose = false;
 
-    private static volatile List<RetransformEntry> retransformEntries = RetransformCommand.allRetransformEntries();
+    private String hashCode;
+    private String classLoaderClass;
 
     private static volatile List<String> mockClass = new ArrayList<String>();
 
@@ -95,10 +106,28 @@ public class MockCommand extends AnnotatedCommand {
         this.conditionExpress = conditionExpress;
     }
 
-    @Option(shortName = "b", longName = "before", flag = true)
-    @Description("Mock before method invocation (修改入参/立即返回)")
-    public void setBefore(boolean before) {
-        isBefore = before;
+    @Option(shortName = "a", longName = "after", flag = true)
+    @Description("Mock after method invocation (修改入参/立即返回)")
+    public void setAfter(boolean after) {
+        isAfter = after;
+    }
+
+    @Option(shortName = "e", longName = "exception", flag = true)
+    @Description("Throw exception instead of normal return")
+    public void setException(boolean exception) {
+        isException = exception;
+    }
+
+    @Option(longName = "clear", flag = true)
+    @Description("Clear mock for specified class/method")
+    public void setClear(boolean clear) {
+        this.clear = clear;
+    }
+
+    @Option(longName = "clear-all", flag = true)
+    @Description("Clear all mocks")
+    public void setClearAll(boolean clearAll) {
+        this.clearAll = clearAll;
     }
 
     @Option(shortName = "M", longName = "sizeLimit")
@@ -141,8 +170,12 @@ public class MockCommand extends AnnotatedCommand {
         return conditionExpress;
     }
 
-    public boolean isBefore() {
-        return isBefore;
+    public boolean isAfter() {
+        return isAfter;
+    }
+
+    public boolean isException() {
+        return isException;
     }
 
     public Integer getSizeLimit() {
@@ -181,47 +214,69 @@ public class MockCommand extends AnnotatedCommand {
         }
         int lock = session.getLock();
         try {
+            // 处理清除逻辑
+            if (clearAll) {
+                clearAllMocks(process.session().getInstrumentation());
+                process.appendResult(EnhancerModelFactory.create(new EnhancerAffect(), true, "All mocks cleared."));
+                process.end(0, "OK");
+                return;
+            }
+
+            if (clear) {
+                if (classPattern == null || methodPattern == null) {
+                    process.end(-1, "--clear requires class-pattern and method-pattern");
+                    return;
+                }
+                clearMock(process.session().getInstrumentation());
+                process.appendResult(EnhancerModelFactory.create(new EnhancerAffect(), true, "Mock cleared."));
+                process.end(0, "OK");
+                return;
+            }
+
+            // 检查必要参数
+            if (classPattern == null || methodPattern == null) {
+                process.end(-1, "class-pattern and method-pattern are required.");
+                return;
+            }
+
+            if (express == null) {
+                process.end(-1, "Mock express is required (use -b/-s/-e with value).");
+                return;
+            }
+
             Instrumentation inst = session.getInstrumentation();
+            Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(classPattern, isRegEx);
+            Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(methodPattern, isRegEx);
 
-            // 1. 创建匹配器
-            Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(getClassPattern(), isRegEx());
-            Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(getMethodPattern(), isRegEx());
-
-            // 2. 搜寻类 方法
             Set<Class<?>> matchingClasses = GlobalOptions.isDisableSubClass
                     ? SearchUtils.searchClass(inst, classNameMatcher)
                     : SearchUtils.searchSubClass(inst, SearchUtils.searchClass(inst, classNameMatcher));
 
-            // 3. 缓存ognl
-            // 4. 增强代码
-            // 5. 加入arthas类transform 增强
-            // if(AsmUtils.containsMethodInsnNode(methodNode,
-            // Type.getInternalName(OgnlMockAdvice.class), "onInvoke")) {
+            if (matchingClasses.isEmpty()) {
+                process.end(-1, "No class matched: " + classPattern);
+                return;
+            }
 
-            // // 增强字节
-            // MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode,
-            // groupLocationFilter);
-            // DefaultInterceptorClassParser parser = new DefaultInterceptorClassParser();
-            // List<InterceptorProcessor> interceptors = parser.parse(OgnlMockAdvice.class);
-            // for (InterceptorProcessor interceptor : interceptorProcessors) {
-            // try {
-            // List<Location> locations = interceptor.process(methodProcessor);
-            // for (Location location : locations) {
-            // if (location instanceof MethodInsnNodeWare) {
-            // MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
-            // MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
-            // }
-            // }
+            EnhancerAffect affect = new EnhancerAffect();
+            List<RetransformEntry> entries = new ArrayList<>();
 
-            // } catch (Throwable e) {
-            // logger.error("enhancer error, class: {}, method: {}, interceptor: {}",
-            // classNode.name, methodNode.name, interceptor.getClass().getName(), e);
-            // }
-            // }
-            // }
-            // // 管理mockClass
+            for (Class<?> clazz : matchingClasses) {
+                String className = clazz.getName();
 
-            // }
+                ClassNode classNode = new ClassNode(Opcodes.ASM9);
+                // TODO  获取byte ClassReader classReader = AsmUtils.toClassNode(Enhancer.getClassBytes(clazz), classNode);
+
+                mockClass.add(className);
+                // entries.add(new RetransformEntry(clazz.getName(),
+                //         AsmUtils.toBytes(classNode, clazz.getClassLoader(), classReader),
+                //         hashCode, classLoaderClass));
+            }
+
+            // 注册到 Arthas 全局 retransform 管理器
+            RetransformCommand.addRetransformEntry(entries);
+
+            process.appendResult(EnhancerModelFactory.create(affect, true, "Mock installed."));
+            process.end(0, "OK");
         } catch (Throwable e) {
             logger.warn("mock failed.", e);
             process.end(-1, "mock failed, condition is: " + this.getConditionExpress() + ", express is: "
@@ -231,13 +286,83 @@ public class MockCommand extends AnnotatedCommand {
 
     }
 
+    private void clearMock(Instrumentation inst) {
+        // 从全局 retransform 列表中移除
+        // TODO RetransformCommand.deleteRetransformEntry(classPattern, methodPattern,
+        // isRegEx);
+        // 重新 retransform 以恢复原始字节码
+        Set<Class<?>> classes = SearchUtils.searchClass(inst, SearchUtils.classNameMatcher(classPattern, isRegEx));
+        for (Class<?> clazz : classes) {
+            try {
+                inst.retransformClasses(clazz);
+            } catch (Exception e) {
+                logger.warn("Failed to retransform class on clear: " + clazz.getName(), e);
+            }
+        }
+        mockClass.remove(classPattern);
+    }
+
+    private void clearAllMocks(Instrumentation inst) {
+        // RetransformCommand.deleteAllRetransformEntry();TODO
+        for (String className : mockClass) {
+            Set<Class<?>> classes = SearchUtils.searchClass(inst, SearchUtils.classNameMatcher(className, false));
+            for (Class<?> clazz : classes) {
+                try {
+                    inst.retransformClasses(clazz);
+                } catch (Exception e) {
+                    logger.warn("Failed to retransform class on clear-all: " + clazz.getName(), e);
+                }
+            }
+        }
+        mockClass.clear();
+    }
+
     static class OgnlMockAdvice {
 
         @AtInvoke(name = "", inline = true, whenComplete = false, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
                 "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj) {
+                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj) throws Throwable {
+            MockCommand command = getCurrentMockCommand();
+            if (command == null || command.isAfter()) {
+                return;
+            }
+
+            // 构造上下文
+            Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args, returnObj);
+
+            // 条件判断
+            if (!isConditionMet(command.getConditionExpress(), advice)) {
+                return;
+            }
+
+            Object result;
+            try {
+                result = getExpressionResult(command.getExpress(), advice);
+                if (command.isException()) {
+                    if (result instanceof Throwable) {
+                        throw (Throwable) result;
+                    } else {
+                        throw new RuntimeException("Mock exception must be a Throwable, got: " + result);
+                    }
+                } else if (result instanceof Object[]) {
+                    // 假设表达式返回 [index, newValue] 用于修改入参
+                    Object[] mod = (Object[]) result;
+                    if (mod.length == 2 && mod[0] instanceof Number) {
+                        int index = ((Number) mod[0]).intValue();
+                        if (index >= 0 && index < args.length) {
+                            args[index] = mod[1];
+                        }
+                    }
+                } else {
+                    // 立即返回
+                    throw new MockReturnException(result);
+                }
+            } catch (ExpressException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
         }
 
         @AtInvoke(name = "", inline = true, whenComplete = true, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
@@ -245,7 +370,62 @@ public class MockCommand extends AnnotatedCommand {
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz,
                 @Binding.InvokeInfo String invokeInfo, @Binding.Return Object returnObj) {
+            MockCommand command = getCurrentMockCommand();
+            if (command == null || !command.isAfter()) {
+                return;
+            }
+
+            Advice advice = Advice.newForAfterReturning(null, clazz, null, target, null, returnObj);
+
+            if (!isConditionMet(command.getConditionExpress(), advice)) {
+                return;
+            }
+            
+            Object newReturn;
+            try {
+                newReturn = getExpressionResult(command.getExpress(), advice);
+            } catch (ExpressException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
         }
 
+        // 工具方法
+        private static boolean isConditionMet(String conditionExpress, Advice advice) {
+            if (StringUtils.isEmpty(conditionExpress)) {
+                return true;
+            }
+            try {
+                return ExpressFactory.threadLocalExpress(advice).is(conditionExpress);
+            } catch (ExpressException e) {
+                logger.warn("Condition express error: " + conditionExpress, e);
+                return false;
+            }
+        }
+
+        private static Object getExpressionResult(String express, Advice advice) throws ExpressException {
+            return ExpressFactory.threadLocalExpress(advice).get(express);
+        }
+
+        private static MockCommand getCurrentMockCommand() {
+            // 实际项目中应通过 ThreadLocal 或全局注册表获取当前命令上下文
+            // 此处简化：假设只有一个 active mock（实际需改进）
+            return null; // ⚠️ 这是简化版，真实场景需传递 command 上下文
+        }
+
+    }
+
+    // 自定义异常用于携带返回值
+    public static class MockReturnException extends RuntimeException {
+        private final Object returnValue;
+
+        public MockReturnException(Object returnValue) {
+            super("Mock return", null, false, false);
+            this.returnValue = returnValue;
+        }
+
+        public Object getReturnValue() {
+            return returnValue;
+        }
     }
 }
