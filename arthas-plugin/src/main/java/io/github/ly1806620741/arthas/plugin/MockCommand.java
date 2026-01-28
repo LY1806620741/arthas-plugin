@@ -263,13 +263,13 @@ public class MockCommand extends AnnotatedCommand {
             for (Class<?> clazz : matchingClasses) {
                 String className = clazz.getName();
 
-                ClassNode classNode = new ClassNode(Opcodes.ASM9);
-                // TODO  获取byte ClassReader classReader = AsmUtils.toClassNode(Enhancer.getClassBytes(clazz), classNode);
+                ClassNode classNode = AsmUtils.loadClass(clazz);
+                byte[] classfileBuffer = AsmUtils.toBytes(classNode);
 
                 mockClass.add(className);
-                // entries.add(new RetransformEntry(clazz.getName(),
-                //         AsmUtils.toBytes(classNode, clazz.getClassLoader(), classReader),
-                //         hashCode, classLoaderClass));
+                entries.add(new RetransformEntry(clazz.getName(),
+                        classfileBuffer,
+                        hashCode, classLoaderClass));
             }
 
             // 注册到 Arthas 全局 retransform 管理器
@@ -323,7 +323,8 @@ public class MockCommand extends AnnotatedCommand {
                 "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj) throws Throwable {
+                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj)
+                throws Throwable {
             MockCommand command = getCurrentMockCommand();
             if (command == null || command.isAfter()) {
                 return;
@@ -380,7 +381,7 @@ public class MockCommand extends AnnotatedCommand {
             if (!isConditionMet(command.getConditionExpress(), advice)) {
                 return;
             }
-            
+
             Object newReturn;
             try {
                 newReturn = getExpressionResult(command.getExpress(), advice);

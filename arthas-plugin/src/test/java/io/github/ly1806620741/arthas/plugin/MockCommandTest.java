@@ -20,6 +20,7 @@ import com.taobao.arthas.core.server.ArthasBootstrap;
 import com.taobao.arthas.core.shell.Shell;
 import com.taobao.arthas.core.shell.ShellServer;
 import com.taobao.arthas.core.shell.command.CommandProcess;
+import com.taobao.arthas.core.shell.session.Session;
 import com.taobao.arthas.core.shell.system.Job;
 import com.taobao.arthas.core.util.reflect.FieldUtils;
 import com.taobao.middleware.cli.CLI;
@@ -43,7 +44,7 @@ public class MockCommandTest {
 
         // new AnnotatedCommandImpl
 
-        List<String> args = Arrays.asList("-b demo.MathGame primeFactors 'return null'".split(" "));
+        List<String> args = Arrays.asList("demo.MathGame primeFactors 'return null'".split(" "));
         MockCommand mockCommand = new MockCommand();
         CommandLine commandLine = cli.parse(args, true);
         try {
@@ -64,20 +65,16 @@ public class MockCommandTest {
                 instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(spyJar));
             }
         }
-        ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");;
+        ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
 
         {
-            // ShellServer shellServer = instance.getShellServer();
-            // Shell shell = shellServer.createShell();
-            // Job job = shell.createJob("mock -h");
-            // System.out.println(job.resume());
-            // EqualsMatcher<String> methodNameMatcher = new EqualsMatcher<String>("print");
-            // EqualsMatcher<String> classNameMatcher = new EqualsMatcher<String>(MathGame.class.getName());
-    
-            // URL codeSource = MathGame.class.getProtectionDomain().getCodeSource().getLocation();
-            // URLClassLoader anotherClassLoader = new URLClassLoader(new URL[] { codeSource }, null);
-            // Class<?> anotherMathGame = Class.forName(MathGame.class.getName(), true, anotherClassLoader);
-            mockCommand.process(Mockito.mock(CommandProcess.class));
+            Object a = MathGame.class;
+            CommandProcess commandProcess = Mockito.mock(CommandProcess.class);
+            Session session = Mockito.mock(Session.class);
+            Mockito.doReturn(session).when(commandProcess).session();
+            Mockito.doReturn(true).when(session).tryLock();
+            Mockito.doReturn(instrumentation).when(session).getInstrumentation();
+            mockCommand.process(commandProcess);
         }
 
     }
