@@ -1,6 +1,7 @@
 package io.github.ly1806620741.arthas.plugin;
 
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -17,10 +18,13 @@ import com.alibaba.bytekit.asm.location.Location;
 import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
 import com.alibaba.bytekit.utils.AsmUtils;
 import com.alibaba.deps.org.objectweb.asm.ClassReader;
+import com.alibaba.deps.org.objectweb.asm.ClassWriter;
 import com.alibaba.deps.org.objectweb.asm.Opcodes;
 import com.alibaba.deps.org.objectweb.asm.tree.ClassNode;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
+import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.alibaba.fastjson2.internal.asm.ASMUtils;
+import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.GlobalOptions;
 import com.taobao.arthas.core.advisor.Advice;
 import com.taobao.arthas.core.advisor.AdviceListenerManager;
@@ -34,6 +38,7 @@ import com.taobao.arthas.core.command.model.EnhancerModelFactory;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
+import com.taobao.arthas.core.util.ArthasCheckUtils;
 import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.SearchUtils;
 import com.taobao.arthas.core.util.StringUtils;
@@ -203,6 +208,18 @@ public class MockCommand extends AnnotatedCommand {
         return ExpressFactory.threadLocalExpress(advice).get(express);
     }
 
+    private boolean isIgnore(MethodNode methodNode, Matcher methodNameMatcher) {
+        return null == methodNode || isAbstract(methodNode.access) || !methodNameMatcher.matching(methodNode.name)
+                || ArthasCheckUtils.isEquals(methodNode.name, "<clinit>");
+    }
+
+    /**
+     * 是否抽象属性
+     */
+    private boolean isAbstract(int access) {
+        return (Opcodes.ACC_ABSTRACT & access) == Opcodes.ACC_ABSTRACT;
+    }
+
     @Override
     public void process(CommandProcess process) {
         Session session = process.session();
@@ -260,19 +277,64 @@ public class MockCommand extends AnnotatedCommand {
             EnhancerAffect affect = new EnhancerAffect();
             List<RetransformEntry> entries = new ArrayList<>();
 
+            DefaultInterceptorClassParser parser = new DefaultInterceptorClassParser();
+            List<InterceptorProcessor> interceptorProcessors = parser.parse(OgnlMockAdvice.class);
+
             for (Class<?> clazz : matchingClasses) {
                 String className = clazz.getName();
 
                 ClassNode classNode = AsmUtils.loadClass(clazz);
-                byte[] classfileBuffer = AsmUtils.toBytes(classNode);
+                // byte[] classfileBuffer = AsmUtils.toBytes(classNode);
+                // ClassReader cr = new ClassReader(classfileBuffer);
 
+                List<MethodNode> matchedMethods = new ArrayList<MethodNode>();
+                for (MethodNode methodNode : classNode.methods) {
+                    if (!isIgnore(methodNode, methodNameMatcher)) {
+                        matchedMethods.add(methodNode);
+                    }
+                }
+
+                if (AsmUtils.isEnhancerByCGLIB(className)) {
+                    for (MethodNode methodNode : matchedMethods) {
+                        if (AsmUtils.isConstructor(methodNode)) {
+                            AsmUtils.fixConstructorExceptionTable(methodNode);
+                        }
+                    }
+                }
+
+                for (MethodNode methodNode : matchedMethods) {
+                    MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode);
+                    for (InterceptorProcessor interceptor : interceptorProcessors) {
+                        try {
+                            List<Location> locations = interceptor.process(methodProcessor);
+                            for (Location location : locations) {
+                                if (location instanceof MethodInsnNodeWare) {
+                                    MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
+                                    MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
+                                }
+                            }
+
+                        } catch (Throwable e) {
+                            logger.error("enhancer error, class: {}, method: {}, interceptor: {}", classNode.name,
+                                    methodNode.name, interceptor.getClass().getName(), e);
+                        }
+                    }
+                }
+
+                ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+                classNode.accept(cw);
+                byte[] enhancedBytes = cw.toByteArray();
                 mockClass.add(className);
                 entries.add(new RetransformEntry(clazz.getName(),
-                        classfileBuffer,
+                        enhancedBytes,
                         hashCode, classLoaderClass));
             }
 
             // 注册到 Arthas 全局 retransform 管理器
+            Method method = ReflectUtils.findMethod(
+                    "com.taobao.arthas.core.command.klass100.RetransformCommand.initTransformer()");
+            method.setAccessible(true);
+            method.invoke(null);
             RetransformCommand.addRetransformEntry(entries);
 
             process.appendResult(EnhancerModelFactory.create(affect, true, "Mock installed."));

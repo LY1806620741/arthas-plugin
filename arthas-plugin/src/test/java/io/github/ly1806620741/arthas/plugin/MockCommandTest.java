@@ -68,13 +68,14 @@ public class MockCommandTest {
         ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
 
         {
-            Object a = MathGame.class;
+            MathGame game = new MathGame();
             CommandProcess commandProcess = Mockito.mock(CommandProcess.class);
             Session session = Mockito.mock(Session.class);
             Mockito.doReturn(session).when(commandProcess).session();
             Mockito.doReturn(true).when(session).tryLock();
             Mockito.doReturn(instrumentation).when(session).getInstrumentation();
             mockCommand.process(commandProcess);
+            Assertions.assertNull(game.primeFactors(0));
         }
 
     }
