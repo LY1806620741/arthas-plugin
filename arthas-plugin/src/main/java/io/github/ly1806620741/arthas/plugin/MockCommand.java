@@ -306,14 +306,7 @@ public class MockCommand extends AnnotatedCommand {
                     MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode);
                     for (InterceptorProcessor interceptor : interceptorProcessors) {
                         try {
-                            List<Location> locations = interceptor.process(methodProcessor);
-                            for (Location location : locations) {
-                                if (location instanceof MethodInsnNodeWare) {
-                                    MethodInsnNodeWare methodInsnNodeWare = (MethodInsnNodeWare) location;
-                                    MethodInsnNode methodInsnNode = methodInsnNodeWare.methodInsnNode();
-                                }
-                            }
-
+                            interceptor.process(methodProcessor);
                         } catch (Throwable e) {
                             logger.error("enhancer error, class: {}, method: {}, interceptor: {}", classNode.name,
                                     methodNode.name, interceptor.getClass().getName(), e);
@@ -324,6 +317,7 @@ public class MockCommand extends AnnotatedCommand {
                 ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
                 classNode.accept(cw);
                 byte[] enhancedBytes = cw.toByteArray();
+                System.out.println(AsmUtils.toASMCode(enhancedBytes));
                 mockClass.add(className);
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
