@@ -3,7 +3,6 @@ package io.github.ly1806620741.arthas.plugin;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -14,21 +13,15 @@ import com.alibaba.bytekit.asm.binding.Binding;
 import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
 import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
 import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
-import com.alibaba.bytekit.asm.location.Location;
-import com.alibaba.bytekit.asm.location.MethodInsnNodeWare;
 import com.alibaba.bytekit.utils.AsmUtils;
-import com.alibaba.deps.org.objectweb.asm.ClassReader;
 import com.alibaba.deps.org.objectweb.asm.ClassWriter;
 import com.alibaba.deps.org.objectweb.asm.Opcodes;
+import com.alibaba.deps.org.objectweb.asm.Type;
 import com.alibaba.deps.org.objectweb.asm.tree.ClassNode;
-import com.alibaba.deps.org.objectweb.asm.tree.MethodInsnNode;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
-import com.alibaba.fastjson2.internal.asm.ASMUtils;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.GlobalOptions;
 import com.taobao.arthas.core.advisor.Advice;
-import com.taobao.arthas.core.advisor.AdviceListenerManager;
-import com.taobao.arthas.core.advisor.Enhancer;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
@@ -84,7 +77,7 @@ public class MockCommand extends AnnotatedCommand {
     private String hashCode;
     private String classLoaderClass;
 
-    private static volatile List<String> mockClass = new ArrayList<String>();
+    private static volatile List<Class> mockClass = new ArrayList<Class>();
 
     @Argument(index = 0, argName = "class-pattern")
     @Description("The full qualified class name you want to mock")
@@ -303,6 +296,11 @@ public class MockCommand extends AnnotatedCommand {
                 }
 
                 for (MethodNode methodNode : matchedMethods) {
+                    if (AsmUtils.isNative(methodNode)) {
+                        logger.info("ignore native method: {}",
+                                AsmUtils.methodDeclaration(Type.getObjectType(classNode.name), methodNode));
+                        continue;
+                    }
                     MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode);
                     for (InterceptorProcessor interceptor : interceptorProcessors) {
                         try {
@@ -312,13 +310,15 @@ public class MockCommand extends AnnotatedCommand {
                                     methodNode.name, interceptor.getClass().getName(), e);
                         }
                     }
+                    // if ("primeFactors".equals(methodNode.name)) {
+                    // System.out.println(AsmUtils.toASMCode(methodNode));
+                    // }
                 }
 
                 ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
                 classNode.accept(cw);
                 byte[] enhancedBytes = cw.toByteArray();
-                System.out.println(AsmUtils.toASMCode(enhancedBytes));
-                mockClass.add(className);
+                mockClass.add(clazz);
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
                         hashCode, classLoaderClass));
@@ -330,6 +330,7 @@ public class MockCommand extends AnnotatedCommand {
             method.setAccessible(true);
             method.invoke(null);
             RetransformCommand.addRetransformEntry(entries);
+            inst.retransformClasses(matchingClasses.toArray(new Class[0]));
 
             process.appendResult(EnhancerModelFactory.create(affect, true, "Mock installed."));
             process.end(0, "OK");
@@ -360,8 +361,9 @@ public class MockCommand extends AnnotatedCommand {
 
     private void clearAllMocks(Instrumentation inst) {
         // RetransformCommand.deleteAllRetransformEntry();TODO
-        for (String className : mockClass) {
-            Set<Class<?>> classes = SearchUtils.searchClass(inst, SearchUtils.classNameMatcher(className, false));
+        for (Class className : mockClass) {
+            Set<Class<?>> classes = SearchUtils.searchClass(inst,
+                    SearchUtils.classNameMatcher(className.getSimpleName(), false));
             for (Class<?> clazz : classes) {
                 try {
                     inst.retransformClasses(clazz);
@@ -379,72 +381,80 @@ public class MockCommand extends AnnotatedCommand {
                 "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args, @Binding.Return Object returnObj)
+                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args)
                 throws Throwable {
-            MockCommand command = getCurrentMockCommand();
-            if (command == null || command.isAfter()) {
-                return;
-            }
+            System.out.println("b test");
 
-            // 构造上下文
-            Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args, returnObj);
+            // OgnlMockAdvice.getCurrentMockCommand();
+            // System.out.println("b test");
+            // if (command == null || command.isAfter()) {
+            // return;
+            // }
 
-            // 条件判断
-            if (!isConditionMet(command.getConditionExpress(), advice)) {
-                return;
-            }
+            // // 构造上下文
+            // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args,
+            // null);
 
-            Object result;
-            try {
-                result = getExpressionResult(command.getExpress(), advice);
-                if (command.isException()) {
-                    if (result instanceof Throwable) {
-                        throw (Throwable) result;
-                    } else {
-                        throw new RuntimeException("Mock exception must be a Throwable, got: " + result);
-                    }
-                } else if (result instanceof Object[]) {
-                    // 假设表达式返回 [index, newValue] 用于修改入参
-                    Object[] mod = (Object[]) result;
-                    if (mod.length == 2 && mod[0] instanceof Number) {
-                        int index = ((Number) mod[0]).intValue();
-                        if (index >= 0 && index < args.length) {
-                            args[index] = mod[1];
-                        }
-                    }
-                } else {
-                    // 立即返回
-                    throw new MockReturnException(result);
-                }
-            } catch (ExpressException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
+            // // 条件判断
+            // if (!isConditionMet(command.getConditionExpress(), advice)) {
+            // return;
+            // }
+
+            // Object result;
+            // try {
+            // result = getExpressionResult(command.getExpress(), advice);
+            // if (command.isException()) {
+            // if (result instanceof Throwable) {
+            // throw (Throwable) result;
+            // } else {
+            // throw new RuntimeException("Mock exception must be a Throwable, got: " +
+            // result);
+            // }
+            // } else if (result instanceof Object[]) {
+            // // 假设表达式返回 [index, newValue] 用于修改入参
+            // Object[] mod = (Object[]) result;
+            // if (mod.length == 2 && mod[0] instanceof Number) {
+            // int index = ((Number) mod[0]).intValue();
+            // if (index >= 0 && index < args.length) {
+            // args[index] = mod[1];
+            // }
+            // }
+            // } else {
+            // // 立即返回
+            // throw new MockReturnException(result);
+            // }
+            // } catch (ExpressException e) {
+            // // TODO Auto-generated catch block
+            // e.printStackTrace();
+            // }
         }
 
         @AtInvoke(name = "", inline = true, whenComplete = true, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
                 "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Return Object returnObj) {
-            MockCommand command = getCurrentMockCommand();
-            if (command == null || !command.isAfter()) {
-                return;
-            }
+                @Binding.InvokeInfo String invokeInfo) {
+            System.out.println("a test");
 
-            Advice advice = Advice.newForAfterReturning(null, clazz, null, target, null, returnObj);
+            // MockCommand command = getCurrentMockCommand();
+            // if (command == null || !command.isAfter()) {
+            // return;
+            // }
 
-            if (!isConditionMet(command.getConditionExpress(), advice)) {
-                return;
-            }
+            // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, null,
+            // null);
 
-            Object newReturn;
-            try {
-                newReturn = getExpressionResult(command.getExpress(), advice);
-            } catch (ExpressException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
+            // if (!isConditionMet(command.getConditionExpress(), advice)) {
+            // return;
+            // }
+
+            // Object newReturn;
+            // try {
+            // newReturn = getExpressionResult(command.getExpress(), advice);
+            // } catch (ExpressException e) {
+            // // TODO Auto-generated catch block
+            // e.printStackTrace();
+            // }
         }
 
         // 工具方法
@@ -464,10 +474,8 @@ public class MockCommand extends AnnotatedCommand {
             return ExpressFactory.threadLocalExpress(advice).get(express);
         }
 
-        private static MockCommand getCurrentMockCommand() {
-            // 实际项目中应通过 ThreadLocal 或全局注册表获取当前命令上下文
-            // 此处简化：假设只有一个 active mock（实际需改进）
-            return null; // ⚠️ 这是简化版，真实场景需传递 command 上下文
+        private static void getCurrentMockCommand() {
+            System.out.println("test1");
         }
 
     }

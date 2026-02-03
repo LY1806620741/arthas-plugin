@@ -2,9 +2,6 @@ package io.github.ly1806620741.arthas.plugin;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;
-import java.lang.reflect.Field;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.security.CodeSource;
 import java.util.Arrays;
 import java.util.List;
@@ -13,16 +10,11 @@ import java.util.jar.JarFile;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.platform.commons.util.ReflectionUtils;
 import org.mockito.Mockito;
 
 import com.taobao.arthas.core.server.ArthasBootstrap;
-import com.taobao.arthas.core.shell.Shell;
-import com.taobao.arthas.core.shell.ShellServer;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
-import com.taobao.arthas.core.shell.system.Job;
-import com.taobao.arthas.core.util.reflect.FieldUtils;
 import com.taobao.middleware.cli.CLI;
 import com.taobao.middleware.cli.CommandLine;
 import com.taobao.middleware.cli.annotations.CLIConfigurator;
