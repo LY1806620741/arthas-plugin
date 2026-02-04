@@ -14,6 +14,8 @@ import com.alibaba.bytekit.agent.inst.InstrumentApi;
 import com.alibaba.bytekit.asm.MethodProcessor;
 import com.alibaba.bytekit.asm.binding.Binding;
 import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
+import com.alibaba.bytekit.asm.interceptor.annotation.AtEnter;
+import com.alibaba.bytekit.asm.interceptor.annotation.AtExit;
 import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
 import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
 import com.alibaba.bytekit.utils.AsmUtils;
@@ -320,7 +322,7 @@ public class MockCommand extends AnnotatedCommand {
                 }
 
                 byte[] enhancedBytes = AsmUtils.toBytes(classNode);
-                // System.out.println(Decompiler.decompile(enhancedBytes));
+                System.out.println(Decompiler.decompile(enhancedBytes));
                 mockClass.add(clazz);
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
@@ -387,20 +389,19 @@ public class MockCommand extends AnnotatedCommand {
 
         static Map<Class, MockCommand> mockCommands = new HashMap<>();
 
-        @AtInvoke(name = "", inline = false, whenComplete = false, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
-                "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
-                "java.lang.Long", "java.lang.Double" })
+        @AtEnter(inline = true)
         public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args,@Binding.InvokeReturn(optional = true) Object retObj)
+                @Binding.Args Object[] args,@Binding.Return(optional = true) Object returnObj)
                 throws Throwable {
 
             // MockCommand mockCommand = mockCommands.get(clazz);
 
             // if (mockCommand == null || mockCommand.isAfter()) {
-            //     return;
+            // return;
             // }
             // retObj = Void.class;
             System.out.println("tes");
+            return;
 
             // // 构造上下文
             // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args,
@@ -440,11 +441,8 @@ public class MockCommand extends AnnotatedCommand {
             // }
         }
 
-        @AtInvoke(name = "", inline = true, whenComplete = true, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
-                "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
-                "java.lang.Long", "java.lang.Double" })
-        public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo) {
+        @AtExit(inline = true)
+        public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz) {
             System.out.println("a test");
 
             // MockCommand command = getCurrentMockCommand();
