@@ -3,17 +3,21 @@ package io.github.ly1806620741.arthas.plugin;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.alibaba.arthas.deps.org.slf4j.Logger;
 import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
+import com.alibaba.bytekit.agent.inst.InstrumentApi;
 import com.alibaba.bytekit.asm.MethodProcessor;
 import com.alibaba.bytekit.asm.binding.Binding;
 import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
 import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
 import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
 import com.alibaba.bytekit.utils.AsmUtils;
+import com.alibaba.bytekit.utils.Decompiler;
 import com.alibaba.deps.org.objectweb.asm.ClassWriter;
 import com.alibaba.deps.org.objectweb.asm.Opcodes;
 import com.alibaba.deps.org.objectweb.asm.Type;
@@ -315,13 +319,13 @@ public class MockCommand extends AnnotatedCommand {
                     // }
                 }
 
-                ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-                classNode.accept(cw);
-                byte[] enhancedBytes = cw.toByteArray();
+                byte[] enhancedBytes = AsmUtils.toBytes(classNode);
+                // System.out.println(Decompiler.decompile(enhancedBytes));
                 mockClass.add(clazz);
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
                         hashCode, classLoaderClass));
+                OgnlMockAdvice.putMock(clazz, this);
             }
 
             // 注册到 Arthas 全局 retransform 管理器
@@ -375,21 +379,28 @@ public class MockCommand extends AnnotatedCommand {
         mockClass.clear();
     }
 
-    static class OgnlMockAdvice {
+    public static class OgnlMockAdvice {
 
-        @AtInvoke(name = "", inline = true, whenComplete = false, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
+        public static void putMock(Class clz, MockCommand mockCommand) {
+            mockCommands.put(clz, mockCommand);
+        }
+
+        static Map<Class, MockCommand> mockCommands = new HashMap<>();
+
+        @AtInvoke(name = "", inline = false, whenComplete = false, excludes = { "java.arthas.SpyAPI", "java.lang.Byte",
                 "java.lang.Boolean", "java.lang.Short", "java.lang.Character", "java.lang.Integer", "java.lang.Float",
                 "java.lang.Long", "java.lang.Double" })
         public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args)
+                @Binding.InvokeInfo String invokeInfo, @Binding.Args Object[] args,@Binding.InvokeReturn(optional = true) Object retObj)
                 throws Throwable {
-            System.out.println("b test");
 
-            // OgnlMockAdvice.getCurrentMockCommand();
-            // System.out.println("b test");
-            // if (command == null || command.isAfter()) {
-            // return;
+            // MockCommand mockCommand = mockCommands.get(clazz);
+
+            // if (mockCommand == null || mockCommand.isAfter()) {
+            //     return;
             // }
+            // retObj = Void.class;
+            System.out.println("tes");
 
             // // 构造上下文
             // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args,
@@ -474,7 +485,7 @@ public class MockCommand extends AnnotatedCommand {
             return ExpressFactory.threadLocalExpress(advice).get(express);
         }
 
-        private static void getCurrentMockCommand() {
+        public static void getCurrentMockCommand() {
             System.out.println("test1");
         }
 
