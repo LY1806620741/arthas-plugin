@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import com.taobao.arthas.core.GlobalOptions;
 import com.taobao.arthas.core.server.ArthasBootstrap;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
@@ -34,9 +35,7 @@ public class MockCommandTest {
     @Test
     void testProcess() throws Throwable {
 
-        // new AnnotatedCommandImpl
-
-        List<String> args = Arrays.asList("demo.MathGame primeFactors 'return null'".split(" "));
+        List<String> args = Arrays.asList("demo.MathGame", "primeFactors", "#this.returnObj=null");
         MockCommand mockCommand = new MockCommand();
         CommandLine commandLine = cli.parse(args, true);
         try {
@@ -57,10 +56,18 @@ public class MockCommandTest {
                 instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(spyJar));
             }
         }
-        ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
 
+        ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
+        GlobalOptions.strict=false;
+        MathGame game = new MathGame();
         {
-            MathGame game = new MathGame();
+            //原本的异常
+            Assertions.assertThrows(IllegalArgumentException.class,()->{
+                game.primeFactors(0);
+            });
+        }
+        {
+            // before mock null
             CommandProcess commandProcess = Mockito.mock(CommandProcess.class);
             Session session = Mockito.mock(Session.class);
             Mockito.doReturn(session).when(commandProcess).session();

@@ -8,26 +8,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.benf.cfr.reader.util.Optional;
+
 import com.alibaba.arthas.deps.org.slf4j.Logger;
 import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
-import com.alibaba.bytekit.agent.inst.InstrumentApi;
-import com.alibaba.bytekit.asm.MethodProcessor;
-import com.alibaba.bytekit.asm.binding.Binding;
-import com.alibaba.bytekit.asm.interceptor.InterceptorProcessor;
-import com.alibaba.bytekit.asm.interceptor.annotation.AtEnter;
-import com.alibaba.bytekit.asm.interceptor.annotation.AtExit;
-import com.alibaba.bytekit.asm.interceptor.annotation.AtInvoke;
-import com.alibaba.bytekit.asm.interceptor.parser.DefaultInterceptorClassParser;
-import com.alibaba.bytekit.utils.AsmUtils;
 import com.alibaba.bytekit.utils.Decompiler;
-import com.alibaba.deps.org.objectweb.asm.ClassWriter;
 import com.alibaba.deps.org.objectweb.asm.Opcodes;
-import com.alibaba.deps.org.objectweb.asm.Type;
-import com.alibaba.deps.org.objectweb.asm.tree.ClassNode;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.GlobalOptions;
-import com.taobao.arthas.core.advisor.Advice;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
@@ -50,9 +39,10 @@ import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
 
-import net.bytebuddy.matcher.StringMatcher;
-import ognl.Ognl;
-import ognl.OgnlException;
+import io.github.ly1806620741.arthas.OgnlContext;
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.implementation.bytecode.assign.Assigner;
+import net.bytebuddy.matcher.ElementMatchers;
 
 @Name("mock")
 @Summary("Arthas 4.1.4 自定义Mock命令：动态mock指定类的指定方法返回值/抛出异常/修改入参，无侵入不重启")
@@ -82,7 +72,6 @@ public class MockCommand extends AnnotatedCommand {
 
     private String hashCode;
     private String classLoaderClass;
-
     private static volatile List<Class> mockClass = new ArrayList<Class>();
 
     @Argument(index = 0, argName = "class-pattern")
@@ -222,6 +211,7 @@ public class MockCommand extends AnnotatedCommand {
     @Override
     public void process(CommandProcess process) {
         Session session = process.session();
+
         if (!session.tryLock()) {
             String msg = "someone else is enhancing classes, pls. wait.";
             process.appendResult(EnhancerModelFactory.create(null, false, msg));
@@ -276,52 +266,16 @@ public class MockCommand extends AnnotatedCommand {
             EnhancerAffect affect = new EnhancerAffect();
             List<RetransformEntry> entries = new ArrayList<>();
 
-            DefaultInterceptorClassParser parser = new DefaultInterceptorClassParser();
-            List<InterceptorProcessor> interceptorProcessors = parser.parse(OgnlMockAdvice.class);
-
             for (Class<?> clazz : matchingClasses) {
-                String className = clazz.getName();
 
-                ClassNode classNode = AsmUtils.loadClass(clazz);
-                // byte[] classfileBuffer = AsmUtils.toBytes(classNode);
-                // ClassReader cr = new ClassReader(classfileBuffer);
+                byte[] enhancedBytes = new ByteBuddy()
+                        .redefine(clazz)
+                        // 增强 sayHello 方法
+                        .visit(net.bytebuddy.asm.Advice.to(OgnlMockAdvice.class)
+                                .on(ElementMatchers.named(methodPattern)))
+                        .make()
+                        .getBytes();
 
-                List<MethodNode> matchedMethods = new ArrayList<MethodNode>();
-                for (MethodNode methodNode : classNode.methods) {
-                    if (!isIgnore(methodNode, methodNameMatcher)) {
-                        matchedMethods.add(methodNode);
-                    }
-                }
-
-                if (AsmUtils.isEnhancerByCGLIB(className)) {
-                    for (MethodNode methodNode : matchedMethods) {
-                        if (AsmUtils.isConstructor(methodNode)) {
-                            AsmUtils.fixConstructorExceptionTable(methodNode);
-                        }
-                    }
-                }
-
-                for (MethodNode methodNode : matchedMethods) {
-                    if (AsmUtils.isNative(methodNode)) {
-                        logger.info("ignore native method: {}",
-                                AsmUtils.methodDeclaration(Type.getObjectType(classNode.name), methodNode));
-                        continue;
-                    }
-                    MethodProcessor methodProcessor = new MethodProcessor(classNode, methodNode);
-                    for (InterceptorProcessor interceptor : interceptorProcessors) {
-                        try {
-                            interceptor.process(methodProcessor);
-                        } catch (Throwable e) {
-                            logger.error("enhancer error, class: {}, method: {}, interceptor: {}", classNode.name,
-                                    methodNode.name, interceptor.getClass().getName(), e);
-                        }
-                    }
-                    // if ("primeFactors".equals(methodNode.name)) {
-                    // System.out.println(AsmUtils.toASMCode(methodNode));
-                    // }
-                }
-
-                byte[] enhancedBytes = AsmUtils.toBytes(classNode);
                 System.out.println(Decompiler.decompile(enhancedBytes));
                 mockClass.add(clazz);
                 entries.add(new RetransformEntry(clazz.getName(),
@@ -389,117 +343,62 @@ public class MockCommand extends AnnotatedCommand {
 
         static Map<Class, MockCommand> mockCommands = new HashMap<>();
 
-        @AtEnter(inline = true)
-        public static void onInvoke(@Binding.This Object target, @Binding.Class Class<?> clazz,
-                @Binding.Args Object[] args,@Binding.Return(optional = true) Object returnObj)
+        @net.bytebuddy.asm.Advice.OnMethodEnter(inline = true, skipOn = net.bytebuddy.asm.Advice.OnDefaultValue.class)
+        public static Object onInvoke(@net.bytebuddy.asm.Advice.This Object target,
+                @net.bytebuddy.asm.Advice.Origin Class<?> clazz,
+                @net.bytebuddy.asm.Advice.Origin("#m") String methodName,
+                @net.bytebuddy.asm.Advice.AllArguments Object[] args,
+                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext)
                 throws Throwable {
 
-            // MockCommand mockCommand = mockCommands.get(clazz);
+            ognlContext = OgnlMockAdvice.invoke(target, clazz, methodName, args, false);
 
-            // if (mockCommand == null || mockCommand.isAfter()) {
-            // return;
-            // }
-            // retObj = Void.class;
-            System.out.println("tes");
-            return;
-
-            // // 构造上下文
-            // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, args,
-            // null);
-
-            // // 条件判断
-            // if (!isConditionMet(command.getConditionExpress(), advice)) {
-            // return;
-            // }
-
-            // Object result;
-            // try {
-            // result = getExpressionResult(command.getExpress(), advice);
-            // if (command.isException()) {
-            // if (result instanceof Throwable) {
-            // throw (Throwable) result;
-            // } else {
-            // throw new RuntimeException("Mock exception must be a Throwable, got: " +
-            // result);
-            // }
-            // } else if (result instanceof Object[]) {
-            // // 假设表达式返回 [index, newValue] 用于修改入参
-            // Object[] mod = (Object[]) result;
-            // if (mod.length == 2 && mod[0] instanceof Number) {
-            // int index = ((Number) mod[0]).intValue();
-            // if (index >= 0 && index < args.length) {
-            // args[index] = mod[1];
-            // }
-            // }
-            // } else {
-            // // 立即返回
-            // throw new MockReturnException(result);
-            // }
-            // } catch (ExpressException e) {
-            // // TODO Auto-generated catch block
-            // e.printStackTrace();
-            // }
+            return ognlContext.skip ? null : true;
         }
 
-        @AtExit(inline = true)
-        public static void onInvokeAfter(@Binding.This Object target, @Binding.Class Class<?> clazz) {
-            System.out.println("a test");
+        public static OgnlContext invoke(Object target,
+                Class<?> clazz,
+                String methodName,
+                Object[] args, boolean isAfter) {
+            MockCommand mockCommand = mockCommands.get(clazz);
 
-            // MockCommand command = getCurrentMockCommand();
-            // if (command == null || !command.isAfter()) {
-            // return;
-            // }
-
-            // Advice advice = Advice.newForAfterReturning(null, clazz, null, target, null,
-            // null);
-
-            // if (!isConditionMet(command.getConditionExpress(), advice)) {
-            // return;
-            // }
-
-            // Object newReturn;
-            // try {
-            // newReturn = getExpressionResult(command.getExpress(), advice);
-            // } catch (ExpressException e) {
-            // // TODO Auto-generated catch block
-            // e.printStackTrace();
-            // }
-        }
-
-        // 工具方法
-        private static boolean isConditionMet(String conditionExpress, Advice advice) {
-            if (StringUtils.isEmpty(conditionExpress)) {
-                return true;
+            if (mockCommand == null || mockCommand.isAfter()) {
+                return null;
             }
+
+            OgnlContext ognlContext;
+            if (isAfter) {
+                ognlContext = (OgnlContext) target;
+            } else {
+                // 构造上下文
+                ognlContext = OgnlContext.init(null, clazz, null, target, args,
+                        null);
+            }
+
             try {
-                return ExpressFactory.threadLocalExpress(advice).is(conditionExpress);
+                getExpressionResult(mockCommand.getExpress(), ognlContext);
             } catch (ExpressException e) {
-                logger.warn("Condition express error: " + conditionExpress, e);
-                return false;
+                e.printStackTrace();
             }
+
+            return ognlContext;
         }
 
-        private static Object getExpressionResult(String express, Advice advice) throws ExpressException {
-            return ExpressFactory.threadLocalExpress(advice).get(express);
+        @net.bytebuddy.asm.Advice.OnMethodExit(inline = true)
+        public static void onInvokeAfter(
+                @net.bytebuddy.asm.Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object returned,
+                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext) {
+            OgnlMockAdvice.invoke(ognlContext, null, null, null, true);
+
+            if (!Optional.empty().equals(ognlContext.returnObj)) {
+                returned = ognlContext.returnObj;
+            }
+
         }
 
-        public static void getCurrentMockCommand() {
-            System.out.println("test1");
+        private static Object getExpressionResult(String express, OgnlContext ognlContext) throws ExpressException {
+            return ExpressFactory.threadLocalExpress(ognlContext).get(express);
         }
 
-    }
-
-    // 自定义异常用于携带返回值
-    public static class MockReturnException extends RuntimeException {
-        private final Object returnValue;
-
-        public MockReturnException(Object returnValue) {
-            super("Mock return", null, false, false);
-            this.returnValue = returnValue;
-        }
-
-        public Object getReturnValue() {
-            return returnValue;
-        }
     }
 }
