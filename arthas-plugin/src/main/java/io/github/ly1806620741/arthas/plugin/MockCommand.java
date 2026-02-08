@@ -17,7 +17,6 @@ import com.alibaba.deps.org.objectweb.asm.Opcodes;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.GlobalOptions;
-import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
@@ -33,7 +32,6 @@ import com.taobao.arthas.core.util.StringUtils;
 import com.taobao.arthas.core.util.affect.EnhancerAffect;
 import com.taobao.arthas.core.util.matcher.Matcher;
 import com.taobao.middleware.cli.annotations.Argument;
-import com.taobao.middleware.cli.annotations.DefaultValue;
 import com.taobao.middleware.cli.annotations.Description;
 import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
@@ -59,9 +57,8 @@ public class MockCommand extends AnnotatedCommand {
 
     private String classPattern;
     private String methodPattern;
-    private String express;
-    private String conditionExpress;
-    private boolean isAfter = false;
+    private String beforeOgnl;
+    private String afterOgnl;
     private boolean isException = false;
     private boolean clear = false;
     private boolean clearAll = false;
@@ -86,23 +83,22 @@ public class MockCommand extends AnnotatedCommand {
         this.methodPattern = methodPattern;
     }
 
-    @Argument(index = 2, argName = "express", required = false)
-    @DefaultValue("{params, target, returnObj}")
-    @Description("The mock express, written by ognl. \n" + Constants.EXPRESS_EXAMPLES)
-    public void setExpress(String express) {
-        this.express = express;
+    @Option(shortName = "b", longName = "beforeOgnl")
+    @Description("Mock before method invocation (修改入参/立即返回)")
+    public void setBeforeOgnl(String beforeOgnl) {
+        this.beforeOgnl = beforeOgnl;
     }
 
-    @Argument(index = 3, argName = "condition-express", required = false)
-    @Description(Constants.CONDITION_EXPRESS)
-    public void setConditionExpress(String conditionExpress) {
-        this.conditionExpress = conditionExpress;
-    }
+    // @Argument(index = 3, argName = "condition-express", required = false)
+    // @Description(Constants.CONDITION_EXPRESS)
+    // public void setConditionExpress(String conditionExpress) {
+    // this.conditionExpress = conditionExpress;
+    // }
 
-    @Option(shortName = "a", longName = "after", flag = true)
+    @Option(shortName = "a", longName = "afterOgnl")
     @Description("Mock after method invocation (修改入参/立即返回)")
-    public void setAfter(boolean after) {
-        isAfter = after;
+    public void setAfterOgnl(String afterOgnl) {
+        this.afterOgnl = afterOgnl;
     }
 
     @Option(shortName = "e", longName = "exception", flag = true)
@@ -155,16 +151,12 @@ public class MockCommand extends AnnotatedCommand {
         return methodPattern;
     }
 
-    public String getExpress() {
-        return express;
+    public String getBeforeOgnl() {
+        return beforeOgnl;
     }
 
-    public String getConditionExpress() {
-        return conditionExpress;
-    }
-
-    public boolean isAfter() {
-        return isAfter;
+    public String getAfterOgnl() {
+        return afterOgnl;
     }
 
     public boolean isException() {
@@ -245,11 +237,6 @@ public class MockCommand extends AnnotatedCommand {
                 return;
             }
 
-            if (express == null) {
-                process.end(-1, "Mock express is required (use -b/-s/-e with value).");
-                return;
-            }
-
             Instrumentation inst = session.getInstrumentation();
             Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(classPattern, isRegEx);
             Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(methodPattern, isRegEx);
@@ -296,8 +283,8 @@ public class MockCommand extends AnnotatedCommand {
             process.end(0, "OK");
         } catch (Throwable e) {
             logger.warn("mock failed.", e);
-            process.end(-1, "mock failed, condition is: " + this.getConditionExpress() + ", express is: "
-                    + this.getExpress() + ", " + e.getMessage() + ", visit " + LogUtil.loggingFile()
+            process.end(-1, "mock failed, beforeOgnl is: " + this.getBeforeOgnl() + ", afterOgnl is: "
+                    + this.getAfterOgnl() + ", " + e.getMessage() + ", visit " + LogUtil.loggingFile()
                     + " for more details.");
         }
 
@@ -362,21 +349,30 @@ public class MockCommand extends AnnotatedCommand {
                 Object[] args, boolean isAfter) {
             MockCommand mockCommand = mockCommands.get(clazz);
 
-            if (mockCommand == null || mockCommand.isAfter()) {
+            if (mockCommand == null) {
                 return null;
             }
 
             OgnlContext ognlContext;
+            String express;
             if (isAfter) {
+                if (null == mockCommand.getAfterOgnl()) {
+                    return null;
+                }
+                express = mockCommand.getAfterOgnl();
                 ognlContext = (OgnlContext) target;
             } else {
                 // 构造上下文
                 ognlContext = OgnlContext.init(null, clazz, null, target, args,
                         null);
+                if (null == mockCommand.getBeforeOgnl()) {
+                    return ognlContext;
+                }
+                express = mockCommand.getBeforeOgnl();
             }
 
             try {
-                getExpressionResult(mockCommand.getExpress(), ognlContext);
+                getExpressionResult(express, ognlContext);
             } catch (ExpressException e) {
                 e.printStackTrace();
             }

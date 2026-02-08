@@ -35,19 +35,10 @@ public class MockCommandTest {
     @Test
     void testProcess() throws Throwable {
 
-        List<String> args = Arrays.asList("demo.MathGame", "primeFactors", "#this.returnObj=null");
-        MockCommand mockCommand = new MockCommand();
-        CommandLine commandLine = cli.parse(args, true);
-        try {
-            CLIConfigurator.inject(commandLine, mockCommand);
-        } catch (Throwable e) {
-            throw new RuntimeException(e);
-        }
-        Assertions.assertEquals(mockCommand.getClassPattern(), "demo.MathGame");
-
         Instrumentation instrumentation = ByteBuddyAgent.install();
 
         {
+            // 测试前工作 重定位spyjar
             CodeSource codeSource = ArthasBootstrap.class.getProtectionDomain().getCodeSource();
             if (codeSource != null) {
                 File arthasCoreJarFile = new File(codeSource.getLocation().toURI().getSchemeSpecificPart());
@@ -57,25 +48,68 @@ public class MockCommandTest {
             }
         }
 
-        ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
-        GlobalOptions.strict=false;
-        MathGame game = new MathGame();
         {
-            //原本的异常
-            Assertions.assertThrows(IllegalArgumentException.class,()->{
-                game.primeFactors(0);
-            });
+            // 测试前工作 初始化arthas
+            ArthasBootstrap instance = ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
+            GlobalOptions.strict = false;
         }
+
+        CommandProcess commandProcess;
         {
-            // before mock null
-            CommandProcess commandProcess = Mockito.mock(CommandProcess.class);
+            // 测试前工作 mock session
+            commandProcess = Mockito.mock(CommandProcess.class);
             Session session = Mockito.mock(Session.class);
             Mockito.doReturn(session).when(commandProcess).session();
             Mockito.doReturn(true).when(session).tryLock();
             Mockito.doReturn(instrumentation).when(session).getInstrumentation();
-            mockCommand.process(commandProcess);
-            Assertions.assertNull(game.primeFactors(0));
+
         }
 
+        MathGame game = new MathGame();
+
+        {
+            // 原本的异常
+            Assertions.assertThrows(IllegalArgumentException.class, () -> {
+                game.primeFactors(0);
+            });
+        }
+
+        { // 中断原逻辑测试
+            MockCommand mockCommand = buildMockCommand("demo.MathGame", "primeFactors", "-b", "#this.returnObj=null");
+            Assertions.assertEquals(mockCommand.getClassPattern(), "demo.MathGame");
+            { // before mock null
+                mockCommand.process(commandProcess);
+                Assertions.assertNull(game.primeFactors(0));
+                // list mock
+                // buildMockCommand("demo.MathGame", "primeFactors", "-l").process(commandProcess)
+            }
+            { // before mock null
+                // mockCommand = buildMockCommand("demo.MathGame", "primeFactors","#this.returnObj=null");
+                // mockCommand.process(commandProcess);
+                // Assertions.assertNull(game.primeFactors(0));
+            }
+
+        }
+
+        // {
+        // // after mock null
+        // args = Arrays.asList("demo.MathGame", "primeFactors", "-a",
+        // "@java.lang.System.out.println('after')");
+        // mockCommand.process(commandProcess);
+        // Assertions.assertNull(game.primeFactors(0));
+        // }
+
+    }
+
+    private MockCommand buildMockCommand(String... strings) {
+        MockCommand mockCommand = new MockCommand();
+        List<String> args = Arrays.asList(strings);
+        CommandLine commandLine = cli.parse(args, true);
+        try {
+            CLIConfigurator.inject(commandLine, mockCommand);
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+        return mockCommand;
     }
 }
