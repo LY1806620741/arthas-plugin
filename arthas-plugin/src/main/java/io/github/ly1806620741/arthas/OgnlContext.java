@@ -51,6 +51,44 @@ public class OgnlContext {
             Object[] params,
             Object returnObj) {
         OgnlContext ognlContext = new OgnlContext(loader,clazz,method,target,params);
+        ognlContext.originReturnObj = returnObj == null ? Optional.empty() : returnObj;
+        ognlContext.returnObj = returnObj == null ? Optional.empty() : returnObj;
         return ognlContext;
+    }
+
+    public ClassLoader getLoader() {
+        return loader;
+    }
+
+    public Class<?> getClazz() {
+        return clazz;
+    }
+
+    public ArthasMethod getMethod() {
+        return method;
+    }
+
+    public Object getTarget() {
+        return target;
+    }
+
+    public Object[] getParams() {
+        return params;
+    }
+
+    public Throwable getThrowExp() {
+        return throwExp;
+    }
+
+    public void setThrowExp(Throwable throwExp) {
+        this.throwExp = throwExp;
+    }
+
+    public void setOriginReturnObj(Object originReturnObj) {
+        this.originReturnObj = originReturnObj == null ? Optional.empty() : originReturnObj;
+    }
+
+    public void setReturnObj(Object returnObj) {
+        this.returnObj = returnObj == null ? Optional.empty() : returnObj;
     }
 }

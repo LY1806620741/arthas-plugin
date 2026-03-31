@@ -3,11 +3,10 @@ package io.github.ly1806620741.arthas.plugin;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
+import java.util.concurrent.ConcurrentHashMap;
 import org.benf.cfr.reader.util.Optional;
 
 import com.alibaba.arthas.deps.org.slf4j.Logger;
@@ -17,6 +16,7 @@ import com.alibaba.deps.org.objectweb.asm.Opcodes;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.GlobalOptions;
+import com.taobao.arthas.core.advisor.ArthasMethod;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
@@ -69,7 +69,7 @@ public class MockCommand extends AnnotatedCommand {
 
     private String hashCode;
     private String classLoaderClass;
-    private static volatile List<Class> mockClass = new ArrayList<Class>();
+    private static volatile List<Class<?>> mockClass = new ArrayList<>();
 
     @Argument(index = 0, argName = "class-pattern")
     @Description("The full qualified class name you want to mock")
@@ -188,7 +188,7 @@ public class MockCommand extends AnnotatedCommand {
         return ExpressFactory.threadLocalExpress(advice).get(express);
     }
 
-    private boolean isIgnore(MethodNode methodNode, Matcher methodNameMatcher) {
+    private boolean isIgnore(MethodNode methodNode, Matcher<String> methodNameMatcher) {
         return null == methodNode || isAbstract(methodNode.access) || !methodNameMatcher.matching(methodNode.name)
                 || ArthasCheckUtils.isEquals(methodNode.name, "<clinit>");
     }
@@ -263,7 +263,10 @@ public class MockCommand extends AnnotatedCommand {
                         .make()
                         .getBytes();
 
-                System.out.println(Decompiler.decompile(enhancedBytes));
+                if (verbose) {
+                    logger.info("Enhanced class {} method {}:\n{}", clazz.getName(), methodPattern,
+                            Decompiler.decompile(enhancedBytes));
+                }
                 mockClass.add(clazz);
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
@@ -302,53 +305,76 @@ public class MockCommand extends AnnotatedCommand {
             } catch (Exception e) {
                 logger.warn("Failed to retransform class on clear: " + clazz.getName(), e);
             }
+            OgnlMockAdvice.removeMock(clazz);
+            mockClass.remove(clazz);
         }
-        mockClass.remove(classPattern);
     }
 
     private void clearAllMocks(Instrumentation inst) {
         // RetransformCommand.deleteAllRetransformEntry();TODO
-        for (Class className : mockClass) {
+        for (Class<?> className : new ArrayList<Class<?>>(mockClass)) {
             Set<Class<?>> classes = SearchUtils.searchClass(inst,
-                    SearchUtils.classNameMatcher(className.getSimpleName(), false));
+                    SearchUtils.classNameMatcher(className.getName(), false));
             for (Class<?> clazz : classes) {
                 try {
                     inst.retransformClasses(clazz);
                 } catch (Exception e) {
                     logger.warn("Failed to retransform class on clear-all: " + clazz.getName(), e);
                 }
+                OgnlMockAdvice.removeMock(clazz);
             }
+            mockClass.remove(className);
         }
-        mockClass.clear();
+    }
+
+    static RuntimeException propagateMockException(Throwable throwable) {
+        Throwable cause = throwable.getCause();
+        if (cause instanceof RuntimeException) {
+            throw (RuntimeException) cause;
+        }
+        return new RuntimeException(throwable);
     }
 
     public static class OgnlMockAdvice {
 
-        public static void putMock(Class clz, MockCommand mockCommand) {
+        static Map<Class<?>, MockCommand> mockCommands = new ConcurrentHashMap<>();
+
+        public static void putMock(Class<?> clz, MockCommand mockCommand) {
             mockCommands.put(clz, mockCommand);
         }
 
-        static Map<Class, MockCommand> mockCommands = new HashMap<>();
+        public static void removeMock(Class<?> clz) {
+            mockCommands.remove(clz);
+        }
 
         @net.bytebuddy.asm.Advice.OnMethodEnter(inline = true, skipOn = net.bytebuddy.asm.Advice.OnDefaultValue.class)
-        public static Object onInvoke(@net.bytebuddy.asm.Advice.This Object target,
+        public static Object onInvokeBefore(
+                @net.bytebuddy.asm.Advice.This(optional = true) Object target,
+                @net.bytebuddy.asm.Advice.AllArguments(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object[] args,
                 @net.bytebuddy.asm.Advice.Origin Class<?> clazz,
                 @net.bytebuddy.asm.Advice.Origin("#m") String methodName,
-                @net.bytebuddy.asm.Advice.AllArguments Object[] args,
-                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext)
-                throws Throwable {
+                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext) throws Throwable {
 
             ognlContext = OgnlMockAdvice.invoke(target, clazz, methodName, args, false);
-
-            return ognlContext.skip ? null : true;
+            if (ognlContext == null || !Boolean.TRUE.equals(ognlContext.skip)) {
+                return Boolean.TRUE;
+            }
+            return null;
         }
 
         public static OgnlContext invoke(Object target,
                 Class<?> clazz,
                 String methodName,
-                Object[] args, boolean isAfter) {
+                Object[] args,
+                boolean isAfter) {
             MockCommand mockCommand = mockCommands.get(clazz);
-
+            if (isAfter && target instanceof OgnlContext) {
+                OgnlContext existingContext = (OgnlContext) target;
+                if (clazz == null) {
+                    clazz = existingContext.getClazz();
+                }
+                mockCommand = mockCommands.get(clazz);
+            }
             if (mockCommand == null) {
                 return null;
             }
@@ -356,16 +382,15 @@ public class MockCommand extends AnnotatedCommand {
             OgnlContext ognlContext;
             String express;
             if (isAfter) {
-                if (null == mockCommand.getAfterOgnl()) {
-                    return null;
+                ognlContext = (OgnlContext) target;
+                if (mockCommand.getAfterOgnl() == null) {
+                    return ognlContext;
                 }
                 express = mockCommand.getAfterOgnl();
-                ognlContext = (OgnlContext) target;
             } else {
-                // 构造上下文
-                ognlContext = OgnlContext.init(null, clazz, null, target, args,
-                        null);
-                if (null == mockCommand.getBeforeOgnl()) {
+                ognlContext = OgnlContext.init(clazz.getClassLoader(), clazz, resolveArthasMethod(clazz, methodName),
+                        target, args, null);
+                if (mockCommand.getBeforeOgnl() == null) {
                     return ognlContext;
                 }
                 express = mockCommand.getBeforeOgnl();
@@ -373,28 +398,97 @@ public class MockCommand extends AnnotatedCommand {
 
             try {
                 getExpressionResult(express, ognlContext);
-            } catch (ExpressException e) {
-                e.printStackTrace();
+            } catch (Throwable e) {
+                throw MockCommand.propagateMockException(e);
             }
 
             return ognlContext;
         }
 
-        @net.bytebuddy.asm.Advice.OnMethodExit(inline = true)
+        @net.bytebuddy.asm.Advice.OnMethodExit(inline = true, onThrowable = Throwable.class)
         public static void onInvokeAfter(
                 @net.bytebuddy.asm.Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object returned,
+                @net.bytebuddy.asm.Advice.Origin Class<?> clazz,
+                @net.bytebuddy.asm.Advice.Thrown(readOnly = false, typing = Assigner.Typing.DYNAMIC) Throwable thrown,
                 @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext) {
-            OgnlMockAdvice.invoke(ognlContext, null, null, null, true);
+            if (ognlContext == null) {
+                return;
+            }
+
+            ognlContext.setOriginReturnObj(returned);
+            ognlContext.setReturnObj(returned);
+            ognlContext.setThrowExp(thrown);
+
+            OgnlMockAdvice.invoke(ognlContext, clazz, null, null, true);
 
             if (!Optional.empty().equals(ognlContext.returnObj)) {
                 returned = ognlContext.returnObj;
+                thrown = null;
             }
-
+            if (ognlContext.getThrowExp() != null) {
+                thrown = ognlContext.getThrowExp();
+            }
         }
 
         private static Object getExpressionResult(String express, OgnlContext ognlContext) throws ExpressException {
             return ExpressFactory.threadLocalExpress(ognlContext).get(express);
         }
 
+        private static ArthasMethod resolveArthasMethod(Class<?> clazz, String methodName) {
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (method.getName().equals(methodName)) {
+                    return new ArthasMethod(clazz, methodName, descriptor(method.getParameterTypes()));
+                }
+            }
+            throw new IllegalArgumentException("No method named '" + methodName + "' found on " + clazz.getName());
+        }
+
+        private static String descriptor(Class<?>[] parameterTypes) {
+            StringBuilder builder = new StringBuilder();
+            for (Class<?> parameterType : parameterTypes) {
+                builder.append(toDescriptor(parameterType));
+            }
+            return builder.toString();
+        }
+
+        private static String toDescriptor(Class<?> type) {
+            if (type.isPrimitive()) {
+                if (type == void.class) {
+                    return "V";
+                }
+                if (type == boolean.class) {
+                    return "Z";
+                }
+                if (type == byte.class) {
+                    return "B";
+                }
+                if (type == char.class) {
+                    return "C";
+                }
+                if (type == short.class) {
+                    return "S";
+                }
+                if (type == int.class) {
+                    return "I";
+                }
+                if (type == long.class) {
+                    return "J";
+                }
+                if (type == float.class) {
+                    return "F";
+                }
+                if (type == double.class) {
+                    return "D";
+                }
+            }
+            if (type.isArray()) {
+                return type.getName().replace('.', '/');
+            }
+            return "L" + type.getName().replace('.', '/') + ";";
+        }
+
+        private static RuntimeException propagateMockException(Throwable throwable) {
+            return MockCommand.propagateMockException(throwable);
+        }
     }
 }
