@@ -255,23 +255,24 @@ public class MockCommand extends AnnotatedCommand {
 
             for (Class<?> clazz : matchingClasses) {
 
+                OgnlMockAdvice.putMock(clazz, this);
                 byte[] enhancedBytes = new ByteBuddy()
                         .redefine(clazz)
-                        // 增强 sayHello 方法
                         .visit(net.bytebuddy.asm.Advice.to(OgnlMockAdvice.class)
-                                .on(ElementMatchers.named(methodPattern)))
+                                .on(ElementMatchers.namedOneOf(OgnlMockAdvice.getMockedMethods(clazz))))
                         .make()
                         .getBytes();
 
                 if (verbose) {
-                    logger.info("Enhanced class {} method {}:\n{}", clazz.getName(), methodPattern,
-                            Decompiler.decompile(enhancedBytes));
+                    logger.info("Enhanced class {} methods {}:\n{}", clazz.getName(),
+                            OgnlMockAdvice.getMockedMethods(clazz), Decompiler.decompile(enhancedBytes));
                 }
-                mockClass.add(clazz);
+                if (!mockClass.contains(clazz)) {
+                    mockClass.add(clazz);
+                }
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
                         hashCode, classLoaderClass));
-                OgnlMockAdvice.putMock(clazz, this);
             }
 
             // 注册到 Arthas 全局 retransform 管理器
@@ -337,14 +338,23 @@ public class MockCommand extends AnnotatedCommand {
 
     public static class OgnlMockAdvice {
 
-        static Map<Class<?>, MockCommand> mockCommands = new ConcurrentHashMap<>();
+        static Map<Class<?>, Map<String, MockCommand>> mockCommands = new ConcurrentHashMap<>();
 
         public static void putMock(Class<?> clz, MockCommand mockCommand) {
-            mockCommands.put(clz, mockCommand);
+            mockCommands.computeIfAbsent(clz, key -> new ConcurrentHashMap<>())
+                    .put(mockCommand.getMethodPattern(), mockCommand);
         }
 
         public static void removeMock(Class<?> clz) {
             mockCommands.remove(clz);
+        }
+
+        public static String[] getMockedMethods(Class<?> clz) {
+            Map<String, MockCommand> methodMocks = mockCommands.get(clz);
+            if (methodMocks == null || methodMocks.isEmpty()) {
+                return new String[0];
+            }
+            return methodMocks.keySet().toArray(new String[0]);
         }
 
         @net.bytebuddy.asm.Advice.OnMethodEnter(inline = true, skipOn = net.bytebuddy.asm.Advice.OnDefaultValue.class)
@@ -367,13 +377,16 @@ public class MockCommand extends AnnotatedCommand {
                 String methodName,
                 Object[] args,
                 boolean isAfter) {
-            MockCommand mockCommand = mockCommands.get(clazz);
+            MockCommand mockCommand = getMockCommand(clazz, methodName);
             if (isAfter && target instanceof OgnlContext) {
                 OgnlContext existingContext = (OgnlContext) target;
                 if (clazz == null) {
                     clazz = existingContext.getClazz();
                 }
-                mockCommand = mockCommands.get(clazz);
+                if (methodName == null && existingContext.getMethod() != null) {
+                    methodName = existingContext.getMethod().getName();
+                }
+                mockCommand = getMockCommand(clazz, methodName);
             }
             if (mockCommand == null) {
                 return null;
@@ -432,6 +445,17 @@ public class MockCommand extends AnnotatedCommand {
 
         private static Object getExpressionResult(String express, OgnlContext ognlContext) throws ExpressException {
             return ExpressFactory.threadLocalExpress(ognlContext).get(express);
+        }
+
+        private static MockCommand getMockCommand(Class<?> clazz, String methodName) {
+            if (clazz == null || methodName == null) {
+                return null;
+            }
+            Map<String, MockCommand> methodMocks = mockCommands.get(clazz);
+            if (methodMocks == null) {
+                return null;
+            }
+            return methodMocks.get(methodName);
         }
 
         private static ArthasMethod resolveArthasMethod(Class<?> clazz, String methodName) {
