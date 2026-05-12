@@ -9,23 +9,26 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.taobao.arthas.common.IOUtils;
+import com.taobao.arthas.core.GlobalOptions;
 
 /**
  * 增加的case
  */
-public class ObjectViewTest {
+class ObjectViewTest {
 
     /**
-     * https://github.com/alibaba/arthas/issues/2778
-     * @throws Exception
+     * See <a href="https://github.com/alibaba/arthas/issues/2778">issue #2778</a>.
+     *
+     * @throws Exception when Jacoco instrumentation or reflective allocation fails
      */
     @Test
     @DisplayName("jacoco变量过滤测试")
-    public void jacocoFilter() throws Exception {
+    void jacocoFilter() throws Exception {
         Instrumenter instrumenter = new Instrumenter(new LoggerRuntime());
         String name = ObjectViewTest.class.getName();
         byte[] bytes;
         try (InputStream is = getClass().getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
+            Assertions.assertNotNull(is, "测试类字节码资源不存在");
             bytes = instrumenter.instrument(IOUtils.getBytes(is), name);
         }
 
@@ -41,8 +44,15 @@ public class ObjectViewTest {
 
         ObjectView view = new ObjectView(obj, 3);
 
-        Assertions.assertFalse(view.draw().contains("jacoco"), "应忽略jacoco字段");
-        GlobalOptions.ignoreJacocoField = false;
-        Assertions.assertTrue(view.draw().contains("jacoco"), "应包含jacoco字段");
+        boolean previous = GlobalOptions.ignoreJacocoField;
+        try {
+            GlobalOptions.ignoreJacocoField = true;
+            Assertions.assertFalse(view.draw().contains("jacoco"), "应忽略jacoco字段");
+
+            GlobalOptions.ignoreJacocoField = false;
+            Assertions.assertTrue(view.draw().contains("jacoco"), "应包含jacoco字段");
+        } finally {
+            GlobalOptions.ignoreJacocoField = previous;
+        }
     }
 }
