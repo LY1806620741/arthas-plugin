@@ -242,6 +242,7 @@
                                         com/taobao/arthas/core/command/BuiltinCommandPack.java,
                                         com/taobao/arthas/core/GlobalOptions.java
                                     </includes>
+                                    <overWrite>true</overWrite>
                                 </artifactItem>
                             </artifactItems>
                         </configuration>
@@ -259,17 +260,62 @@
                         <configuration>
                             <target>
 
+                                <!-- ✅ 1. 插入 jacoco 过滤 -->
                                 <echo message="add jacoco filter"/>
 
-                                <!-- ✅ 插入 jacoco 过滤 -->
-                                <replaceregexp
+                                <replace
+                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/GlobalOptions.java">
+                                    <replacetoken><![CDATA[
+    /**
+     * 是否打开verbose 开关
+     */
+]]></replacetoken>
+                                    <replacevalue><![CDATA[
+    /**
+     * 是否忽略 Jacoco 注入的字段
+     */
+    @Option(level = 1,
+            name = "ignore-jacoco-field",
+            summary = "Option to ignore Jacoco injected fields in ObjectView",
+            description = "This option enables ignoring Jacoco injected fields that start with $jacoco, default value true."
+    )
+    public static volatile boolean ignoreJacocoField = true;
+
+    /**
+     * 是否打开verbose 开关
+     */
+]]></replacevalue>
+                                </replace>
+
+                                <replace
                                         file="${project.build.directory}/patched-src/com/taobao/arthas/core/view/ObjectView.java"
-                                        match="field\.setAccessible\(true\);"
-                                        replace="if (GlobalOptions.ignoreJacocoField &amp;&amp; field.getName().startsWith(&quot;$jacoco&quot;)) {&#10;
-    continue;&#10;
-}&#10;
-field.setAccessible(true);&#10;"
-                                        byline="true"/>
+                                        token="field.setAccessible(true);">
+                                    <replacevalue><![CDATA[
+if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
+    continue;
+}
+field.setAccessible(true);
+]]></replacevalue>
+                                </replace>
+
+                                <!-- ✅ 2. 插入 mock功能 -->
+                                <echo message="add mock command"/>
+
+                                <replace
+                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
+                                        token="import com.taobao.middleware.cli.annotations.Name;">
+                                    <replacevalue><![CDATA[
+import io.github.ly1806620741.arthas.plugin.MockCommand;
+]]></replacevalue>
+                                </replace>
+
+                                <replace
+                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
+                                        token="commandClassList.add(StopCommand.class);">
+                                    <replacevalue><![CDATA[
+commandClassList.add(MockCommand.class);
+]]></replacevalue>
+                                </replace>
 
                             </target>
                         </configuration>
