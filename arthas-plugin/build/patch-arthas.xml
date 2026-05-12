@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="patch-arthas">
+    <target name="patch-arthas-sources">
+        <!-- 1. 插入 jacoco 过滤 -->
+        <echo message="add jacoco filter"/>
+
+        <replace file="${patched.global-options.file}">
+            <replacetoken><![CDATA[
+    /**
+     * 是否打开verbose 开关
+     */
+]]></replacetoken>
+            <replacevalue><![CDATA[
+    /**
+     * 是否忽略 Jacoco 注入的字段
+     */
+    @Option(level = 1,
+            name = "ignore-jacoco-field",
+            summary = "Option to ignore Jacoco injected fields in ObjectView",
+            description = "This option enables ignoring Jacoco injected fields that start with $jacoco, default value true."
+    )
+    public static volatile boolean ignoreJacocoField = true;
+
+    /**
+     * 是否打开verbose 开关
+     */
+]]></replacevalue>
+        </replace>
+
+        <replace file="${patched.object-view.file}"
+                 token="field.setAccessible(true);">
+            <replacevalue><![CDATA[
+if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
+    continue;
+}
+field.setAccessible(true);
+]]></replacevalue>
+        </replace>
+
+        <!-- 2. 插入 mock功能 -->
+        <echo message="add mock command"/>
+
+        <replaceregexp
+                file="${patched.builtin-command-pack.file}"
+                match="(import com\.taobao\.middleware\.cli\.annotations\.Name;)"
+                replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;"
+                byline="true"/>
+
+        <replaceregexp
+                file="${patched.builtin-command-pack.file}"
+                match="(commandClassList\.add\(StopCommand\.class\);)"
+                replace="\1${line.separator}commandClassList.add(MockCommand.class);"
+                byline="true"/>
+    </target>
+</project>
+
