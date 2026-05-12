@@ -18,6 +18,13 @@
     <properties>
         <final.jar.name>arthas-core.jar</final.jar.name>
         <arthas.deps.package>com.alibaba.arthas.deps</arthas.deps.package>
+        <bytebuddy.version>1.18.3</bytebuddy.version>
+        <jacoco.version>0.8.14</jacoco.version>
+        <mockito.version>5.21.0</mockito.version>
+        <patched.src.dir>${project.build.directory}/patched-src</patched.src.dir>
+        <patched.global-options.file>${patched.src.dir}/com/taobao/arthas/core/GlobalOptions.java</patched.global-options.file>
+        <patched.object-view.file>${patched.src.dir}/com/taobao/arthas/core/view/ObjectView.java</patched.object-view.file>
+        <patched.builtin-command-pack.file>${patched.src.dir}/com/taobao/arthas/core/command/BuiltinCommandPack.java</patched.builtin-command-pack.file>
     </properties>
 
     <dependencies>
@@ -52,7 +59,7 @@
         <dependency>
             <groupId>net.bytebuddy</groupId>
             <artifactId>byte-buddy-agent</artifactId>
-            <version>1.18.3</version>
+            <version>${bytebuddy.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -113,7 +120,7 @@
         <dependency>
             <groupId>net.bytebuddy</groupId>
             <artifactId>byte-buddy</artifactId>
-            <version>1.18.3</version>
+            <version>${bytebuddy.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -129,7 +136,7 @@
         <dependency>
             <groupId>org.jacoco</groupId>
             <artifactId>org.jacoco.core</artifactId>
-            <version>0.8.14</version>
+            <version>${jacoco.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -147,7 +154,7 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.21.0</version>
+            <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -225,6 +232,7 @@
                         </configuration>
                     </execution>
                     <execution>
+                        <id>unpack-arthas-core-sources</id>
                         <phase>generate-sources</phase>
                         <goals>
                             <goal>unpack</goal>
@@ -236,7 +244,7 @@
                                     <artifactId>arthas-core</artifactId>
                                     <version>${arthas.version}</version>
                                     <classifier>sources</classifier>
-                                    <outputDirectory>${project.build.directory}/patched-src</outputDirectory>
+                                    <outputDirectory>${patched.src.dir}</outputDirectory>
                                     <includes>
                                         com/taobao/arthas/core/view/ObjectView.java,
                                         com/taobao/arthas/core/command/BuiltinCommandPack.java,
@@ -264,7 +272,7 @@
                                 <echo message="add jacoco filter"/>
 
                                 <replace
-                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/GlobalOptions.java">
+                                        file="${patched.global-options.file}">
                                     <replacetoken><![CDATA[
     /**
      * 是否打开verbose 开关
@@ -288,7 +296,7 @@
                                 </replace>
 
                                 <replace
-                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/view/ObjectView.java"
+                                        file="${patched.object-view.file}"
                                         token="field.setAccessible(true);">
                                     <replacevalue><![CDATA[
 if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
@@ -302,13 +310,13 @@ field.setAccessible(true);
                                 <echo message="add mock command"/>
 
                                 <replaceregexp
-                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
+                                        file="${patched.builtin-command-pack.file}"
                                         match="(import com\.taobao\.middleware\.cli\.annotations\.Name;)"
                                         replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;"
                                         byline="true"/>
 
                                 <replaceregexp
-                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
+                                        file="${patched.builtin-command-pack.file}"
                                         match="(commandClassList\.add\(StopCommand\.class\);)"
                                         replace="\1${line.separator}commandClassList.add(MockCommand.class);"
                                         byline="true"/>
@@ -321,13 +329,14 @@ field.setAccessible(true);
                     </execution>
 
                     <execution>
+                        <id>merge-patched-classes-into-arthas-core</id>
                         <phase>package</phase>
                         <goals>
                             <goal>run</goal>
                         </goals>
                         <configuration>
                             <target>
-                                <zip destfile="${project.build.directory}/arthas-core.jar"
+                                <zip destfile="${project.build.directory}/${final.jar.name}"
                                     update="true">
                                     <fileset dir="${project.build.outputDirectory}">
                                         <exclude name="META-INF/MANIFEST.MF" />
@@ -368,7 +377,7 @@ field.setAccessible(true);
                         </goals>
                         <configuration>
                             <sources>
-                                <source>${project.build.directory}/patched-src</source>
+                                <source>${patched.src.dir}</source>
                             </sources>
                         </configuration>
                     </execution>
