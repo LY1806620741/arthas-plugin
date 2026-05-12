@@ -301,21 +301,17 @@ field.setAccessible(true);
                                 <!-- ✅ 2. 插入 mock功能 -->
                                 <echo message="add mock command"/>
 
-                                <replace
+                                <replaceregexp
                                         file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
-                                        token="import com.taobao.middleware.cli.annotations.Name;">
-                                    <replacevalue><![CDATA[
-import io.github.ly1806620741.arthas.plugin.MockCommand;
-]]></replacevalue>
-                                </replace>
+                                        match="(import com\.taobao\.middleware\.cli\.annotations\.Name;)"
+                                        replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;"
+                                        byline="true"/>
 
-                                <replace
+                                <replaceregexp
                                         file="${project.build.directory}/patched-src/com/taobao/arthas/core/command/BuiltinCommandPack.java"
-                                        token="commandClassList.add(StopCommand.class);">
-                                    <replacevalue><![CDATA[
-commandClassList.add(MockCommand.class);
-]]></replacevalue>
-                                </replace>
+                                        match="(commandClassList\.add\(StopCommand\.class\);)"
+                                        replace="\1${line.separator}commandClassList.add(MockCommand.class);"
+                                        byline="true"/>
 
                             </target>
                         </configuration>
