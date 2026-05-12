@@ -5,10 +5,10 @@ import java.io.InputStream;
 import org.jacoco.core.instr.Instrumenter;
 import org.jacoco.core.runtime.LoggerRuntime;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.taobao.arthas.common.IOUtils;
-import com.taobao.arthas.core.GlobalOptions;
 
 /**
  * 增加的case
@@ -20,6 +20,7 @@ public class ObjectViewTest {
      * @throws Exception
      */
     @Test
+    @DisplayName("jacoco变量过滤测试")
     public void jacocoFilter() throws Exception {
         Instrumenter instrumenter = new Instrumenter(new LoggerRuntime());
         String name = ObjectViewTest.class.getName();

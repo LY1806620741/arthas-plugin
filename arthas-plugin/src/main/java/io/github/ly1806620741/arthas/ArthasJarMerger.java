@@ -56,6 +56,7 @@ public class ArthasJarMerger {
             Files.copy(targetJar.toPath(), bakFile.toPath());
             System.out.println("✅ 备份成功: " + BAK_PATH);
         } else {
+            targetJar = new File(BAK_PATH); // 使用备份文件以便可以多次合并
             System.out.println("ℹ️ 备份文件已存在，跳过备份");
         }
 

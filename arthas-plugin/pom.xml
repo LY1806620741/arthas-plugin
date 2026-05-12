@@ -224,6 +224,28 @@
                             </artifactItems>
                         </configuration>
                     </execution>
+                    <execution>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>unpack</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.taobao.arthas</groupId>
+                                    <artifactId>arthas-core</artifactId>
+                                    <version>${arthas.version}</version>
+                                    <classifier>sources</classifier>
+                                    <outputDirectory>${project.build.directory}/patched-src</outputDirectory>
+                                    <includes>
+                                        com/taobao/arthas/core/view/ObjectView.java,
+                                        com/taobao/arthas/core/command/BuiltinCommandPack.java,
+                                        com/taobao/arthas/core/GlobalOptions.java
+                                    </includes>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -231,26 +253,31 @@
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.2.0</version>
                 <executions>
-                    <!-- <execution>
-                        <id>replace-version-in-class</id>
-                        <phase>compile</phase>
+                    <execution>
+                        <id>generate-sources</id>
+                        <phase>generate-sources</phase>
+                        <configuration>
+                            <target>
+
+                                <echo message="add jacoco filter"/>
+
+                                <!-- ✅ 插入 jacoco 过滤 -->
+                                <replaceregexp
+                                        file="${project.build.directory}/patched-src/com/taobao/arthas/core/view/ObjectView.java"
+                                        match="field\.setAccessible\(true\);"
+                                        replace="if (GlobalOptions.ignoreJacocoField &amp;&amp; field.getName().startsWith(&quot;$jacoco&quot;)) {&#10;
+    continue;&#10;
+}&#10;
+field.setAccessible(true);&#10;"
+                                        byline="true"/>
+
+                            </target>
+                        </configuration>
                         <goals>
                             <goal>run</goal>
                         </goals>
-                        <configuration>
-                            <target>
-                                <replaceregexp
-                                    file="${project.build.outputDirectory}/io/github/ly1806620741/arthas/ArthasJarMerger.class"
-                                    encoding="UTF8"
-                                    flags="g"
-                                    byline="false">
-                                    <regexp pattern="\$\{arthas\.version\}" />
-                                    <substitution expression="${arthas.version}" />
-                                </replaceregexp>
-                                <echo message="✅ 已替换 class 文件中的版本为: ${arthas.version}" />
-                            </target>
-                        </configuration>
-                    </execution> -->
+                    </execution>
+
                     <execution>
                         <phase>package</phase>
                         <goals>
@@ -285,6 +312,25 @@
                         </manifest>
                     </archive>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>add-patched-src</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.build.directory}/patched-src</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
         <resources>

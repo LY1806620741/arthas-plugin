@@ -5,11 +5,12 @@ import java.lang.instrument.Instrumentation;
 import java.security.CodeSource;
 import java.util.jar.JarFile;
 
+import com.taobao.arthas.core.GlobalOptions;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import com.taobao.arthas.core.GlobalOptions;
 import com.taobao.arthas.core.server.ArthasBootstrap;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
@@ -20,6 +21,7 @@ import net.bytebuddy.agent.ByteBuddyAgent;
 public class MockCommandTest {
 
     @Test
+    @DisplayName("测试MockCommand能够正确mock方法并且不抛出异常")
     void testProcess() throws Throwable {
 
         Instrumentation instrumentation = ByteBuddyAgent.install();
@@ -72,6 +74,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("AI:测试propagateMockException能够正确处理不同类型的异常")
     void testPropagateMockExceptionReturnsRuntimeCauseDirectly() {
         RuntimeException cause = new IllegalStateException("boom");
         Throwable throwable = new Exception("wrapper", cause);
@@ -82,6 +85,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("AI:测试propagateMockException能够正确处理checked异常")
     void testPropagateMockExceptionWrapsCheckedCause() {
         Throwable checkedCause = new Throwable("checked");
         Throwable throwable = new Exception("wrapper", checkedCause);
@@ -91,6 +95,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("AI:测试propagateMockException能够正确处理没有cause的异常")
     void testPropagateMockExceptionWrapsThrowableWithoutCause() {
         Throwable throwable = new Exception("wrapper-without-cause");
 
@@ -99,6 +104,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("AI:测试propagateMockException能够正确处理Error类型的cause,不是为什么搞那么多发散的case")
     void testPropagateMockExceptionWrapsErrorCause() {
         Error errorCause = new AssertionError("boom");
         Throwable throwable = new Exception("wrapper", errorCause);
@@ -108,6 +114,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("测试afterOgnl能够覆盖方法返回值")
     void testAfterOgnlCanOverrideReturnValue() throws Throwable {
 
         Instrumentation instrumentation = ByteBuddyAgent.install();
@@ -144,6 +151,7 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("测试同一个类的不同方法互不影响")
     void testSameClassDifferentMethodsDoNotOverrideEachOther() throws Throwable {
 
         Instrumentation instrumentation = ByteBuddyAgent.install();

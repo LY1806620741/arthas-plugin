@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import com.taobao.arthas.core.GlobalOptions;
 import org.benf.cfr.reader.util.Optional;
 
 import com.alibaba.arthas.deps.org.slf4j.Logger;
@@ -15,7 +17,6 @@ import com.alibaba.bytekit.utils.Decompiler;
 import com.alibaba.deps.org.objectweb.asm.Opcodes;
 import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.taobao.arthas.common.ReflectUtils;
-import com.taobao.arthas.core.GlobalOptions;
 import com.taobao.arthas.core.advisor.ArthasMethod;
 import com.taobao.arthas.core.command.express.ExpressException;
 import com.taobao.arthas.core.command.express.ExpressFactory;
@@ -429,7 +430,10 @@ public class MockCommand extends AnnotatedCommand {
             }
 
             ognlContext.setOriginReturnObj(returned);
-            ognlContext.setReturnObj(returned);
+            // Keep before-mock return value when the original method is skipped.
+            if (!Boolean.TRUE.equals(ognlContext.skip)) {
+                ognlContext.setReturnObj(returned);
+            }
             ognlContext.setThrowExp(thrown);
 
             OgnlMockAdvice.invoke(ognlContext, clazz, null, null, true);
