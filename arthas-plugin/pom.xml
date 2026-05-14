@@ -24,6 +24,7 @@
         <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
         <maven.antrun.plugin.version>3.2.0</maven.antrun.plugin.version>
         <maven.jar.plugin.version>3.5.0</maven.jar.plugin.version>
+        <maven.failsafe.plugin.version>3.2.5</maven.failsafe.plugin.version>
         <build.helper.plugin.version>3.5.0</build.helper.plugin.version>
         <bytebuddy.version>1.18.3</bytebuddy.version>
         <jacoco.version>0.8.14</jacoco.version>
@@ -339,6 +340,20 @@
                                 <source>${patched.src.dir}</source>
                             </sources>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${maven.failsafe.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>run-integration-tests</id>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>

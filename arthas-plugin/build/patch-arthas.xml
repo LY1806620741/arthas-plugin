@@ -30,10 +30,10 @@
         <replace file="${patched.object-view.file}"
                  token="field.setAccessible(true);">
             <replacevalue><![CDATA[
-if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
-    continue;
-}
-field.setAccessible(true);
+                        if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
+                            continue;
+                        }
+                        field.setAccessible(true);
 ]]></replacevalue>
         </replace>
 
@@ -49,7 +49,7 @@ field.setAccessible(true);
         <replaceregexp
                 file="${patched.builtin-command-pack.file}"
                 match="(commandClassList\.add\(StopCommand\.class\);)"
-                replace="\1${line.separator}commandClassList.add(MockCommand.class);"
+                replace="\1${line.separator}        commandClassList.add(MockCommand.class);"
                 byline="true"/>
     </target>
 </project>
