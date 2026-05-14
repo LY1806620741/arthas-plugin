@@ -24,10 +24,11 @@ import java.util.zip.ZipInputStream;
 class ArthasBootIntegrationIT {
 
     private static final Pattern MOCKED_OUTPUT_PATTERN = Pattern.compile("(?m)^-?\\d+=99991\\*99989\\s*$");
+    private static final String STRICT_PROMPT_FRAGMENT = "execute `options strict false`";
 
     @Test
-    @DisplayName("使用 original 插件增强官方 arthas-core 后验证 math-game mock 功能")
-    void artifactRegressionShouldEnhanceAndMockMathGame() throws Exception {
+    @DisplayName("使用 original 插件增强官方 arthas-core 后验证 strict 模式下 mock 给出手动关闭提示")
+    void artifactRegressionShouldPromptManualStrictDisableBeforeMock() throws Exception {
         Path moduleDir = moduleDir();
         Path targetDir = moduleDir.resolve("target");
         Path arthasBinZip = targetDir.resolve("arthas-bin.zip");
@@ -63,7 +64,7 @@ class ArthasBootIntegrationIT {
             waitForLogGrowth(mathGameLog, 1, Duration.ofSeconds(20));
 
             int telnetPort = findFreePort();
-            String mockCommand = "options strict false;help mock;mock demo.MathGame primeFactors -b '#this.returnObj=@java.util.Arrays@asList(99991,99989)'";
+            String mockCommand = "help mock;mock demo.MathGame primeFactors -b '#this.returnObj=@java.util.Arrays@asList(99991,99989)'";
             ProcessResult attachResult = runProcess(
                     command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
                             "--select", "math-game",
@@ -80,9 +81,9 @@ class ArthasBootIntegrationIT {
             Assertions.assertTrue(attachResult.output.contains("mock") && attachResult.output.contains("help mock"),
                     () -> "附着输出中未发现 mock 命令执行痕迹:\n" + attachResult.output);
 
-            String mathGameOutput = waitForMockedMathGameOutput(mathGameLog, Duration.ofSeconds(20));
-            Assertions.assertTrue(MOCKED_OUTPUT_PATTERN.matcher(mathGameOutput).find(),
-                    () -> "math-game 输出中未观察到 mock 后的固定结果:\n" + mathGameOutput);
+            String mathGameOutput = waitForText(mathGameLog, STRICT_PROMPT_FRAGMENT, Duration.ofSeconds(20));
+            Assertions.assertTrue(mathGameOutput.contains(STRICT_PROMPT_FRAGMENT),
+                    () -> "math-game 输出中未观察到 strict 手动关闭提示:\n" + mathGameOutput);
 
             ProcessResult stopResult = runProcess(
                     command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
@@ -176,12 +177,12 @@ class ArthasBootIntegrationIT {
         throw new IllegalStateException("math-game 在限定时间内未产生输出");
     }
 
-    private static String waitForMockedMathGameOutput(Path logFile, Duration timeout) throws Exception {
+    private static String waitForText(Path logFile, String expectedText, Duration timeout) throws Exception {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
             if (Files.exists(logFile)) {
                 String content = new String(Files.readAllBytes(logFile), StandardCharsets.UTF_8);
-                if (MOCKED_OUTPUT_PATTERN.matcher(content).find()) {
+                if (content.contains(expectedText)) {
                     return content;
                 }
             }

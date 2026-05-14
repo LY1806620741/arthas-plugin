@@ -1,21 +1,25 @@
 package io.github.ly1806620741.arthas.plugin;
 
+import java.io.File;
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.security.CodeSource;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.jar.JarFile;
 
 import com.taobao.arthas.core.GlobalOptions;
 
 import com.alibaba.arthas.deps.org.slf4j.Logger;
 import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.alibaba.bytekit.utils.Decompiler;
-import com.alibaba.deps.org.objectweb.asm.Opcodes;
-import com.alibaba.deps.org.objectweb.asm.tree.MethodNode;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.advisor.ArthasMethod;
 import com.taobao.arthas.core.command.express.ExpressException;
@@ -26,7 +30,6 @@ import com.taobao.arthas.core.command.model.EnhancerModelFactory;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
-import com.taobao.arthas.core.util.ArthasCheckUtils;
 import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.SearchUtils;
 import com.taobao.arthas.core.util.StringUtils;
@@ -39,9 +42,7 @@ import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
 
 import io.github.ly1806620741.arthas.OgnlContext;
-import net.bytebuddy.ByteBuddy;
-import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.matcher.ElementMatchers;
+import ognl.OgnlRuntime;
 
 @Name("mock")
 @Summary("Arthas 4.1.4 自定义Mock命令：动态mock指定类的指定方法返回值/抛出异常/修改入参，无侵入不重启")
@@ -70,7 +71,8 @@ public class MockCommand extends AnnotatedCommand {
 
     private String hashCode;
     private String classLoaderClass;
-    private static volatile List<Class<?>> mockClass = new ArrayList<>();
+    private static final List<Class<?>> mockClass = new ArrayList<>();
+    private static final AtomicBoolean APPENDED_TO_SYSTEM_CLASSLOADER = new AtomicBoolean(false);
 
     @Argument(index = 0, argName = "class-pattern")
     @Description("The full qualified class name you want to mock")
@@ -180,27 +182,6 @@ public class MockCommand extends AnnotatedCommand {
         return verbose;
     }
 
-    protected boolean isConditionMet(String conditionExpress, OgnlMockAdvice advice) throws ExpressException {
-        return StringUtils.isEmpty(conditionExpress)
-                || ExpressFactory.threadLocalExpress(advice).is(conditionExpress);
-    }
-
-    protected Object getExpressionResult(String express, OgnlMockAdvice advice) throws ExpressException {
-        return ExpressFactory.threadLocalExpress(advice).get(express);
-    }
-
-    private boolean isIgnore(MethodNode methodNode, Matcher<String> methodNameMatcher) {
-        return null == methodNode || isAbstract(methodNode.access) || !methodNameMatcher.matching(methodNode.name)
-                || ArthasCheckUtils.isEquals(methodNode.name, "<clinit>");
-    }
-
-    /**
-     * 是否抽象属性
-     */
-    private boolean isAbstract(int access) {
-        return (Opcodes.ACC_ABSTRACT & access) == Opcodes.ACC_ABSTRACT;
-    }
-
     @Override
     public void process(CommandProcess process) {
         Session session = process.session();
@@ -239,6 +220,7 @@ public class MockCommand extends AnnotatedCommand {
             }
 
             Instrumentation inst = session.getInstrumentation();
+            Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
             Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(classPattern, isRegEx);
             Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(methodPattern, isRegEx);
 
@@ -255,18 +237,17 @@ public class MockCommand extends AnnotatedCommand {
             List<RetransformEntry> entries = new ArrayList<>();
 
             for (Class<?> clazz : matchingClasses) {
-
-                OgnlMockAdvice.putMock(clazz, this);
-                byte[] enhancedBytes = new ByteBuddy()
-                        .redefine(clazz)
-                        .visit(net.bytebuddy.asm.Advice.to(OgnlMockAdvice.class)
-                                .on(ElementMatchers.namedOneOf(OgnlMockAdvice.getMockedMethods(clazz))))
-                        .make()
-                        .getBytes();
+                Set<String> matchedMethods = findMatchedMethods(clazz, methodNameMatcher);
+                if (matchedMethods.isEmpty()) {
+                    continue;
+                }
+                putRuntimeMocks(runtimeAdviceClass, clazz, matchedMethods, this);
+                Set<String> allMockedMethods = getRuntimeMockedMethods(runtimeAdviceClass, clazz);
+                byte[] enhancedBytes = AsmMockEnhancer.enhance(clazz, allMockedMethods);
 
                 if (verbose) {
                     logger.info("Enhanced class {} methods {}:\n{}", clazz.getName(),
-                            OgnlMockAdvice.getMockedMethods(clazz), Decompiler.decompile(enhancedBytes));
+                            allMockedMethods, Decompiler.decompile(enhancedBytes));
                 }
                 if (!mockClass.contains(clazz)) {
                     mockClass.add(clazz);
@@ -274,6 +255,11 @@ public class MockCommand extends AnnotatedCommand {
                 entries.add(new RetransformEntry(clazz.getName(),
                         enhancedBytes,
                         hashCode, classLoaderClass));
+            }
+
+            if (entries.isEmpty()) {
+                process.end(-1, "No method matched: " + methodPattern);
+                return;
             }
 
             // 注册到 Arthas 全局 retransform 管理器
@@ -295,25 +281,106 @@ public class MockCommand extends AnnotatedCommand {
 
     }
 
+    private static Class<?> ensureAdviceClassesVisible(Instrumentation instrumentation) {
+        try {
+            if (APPENDED_TO_SYSTEM_CLASSLOADER.compareAndSet(false, true)) {
+                CodeSource codeSource = MockCommand.class.getProtectionDomain().getCodeSource();
+                if (codeSource == null) {
+                    return OgnlMockAdvice.class;
+                }
+                File currentJar = new File(codeSource.getLocation().toURI().getSchemeSpecificPart());
+                if (currentJar.isFile()) {
+                    instrumentation.appendToSystemClassLoaderSearch(new JarFile(currentJar));
+                }
+            }
+            try {
+                return Class.forName(OgnlMockAdvice.class.getName(), true, ClassLoader.getSystemClassLoader());
+            } catch (ClassNotFoundException e) {
+                return OgnlMockAdvice.class;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to append mock command jar to system classloader search.", e);
+            APPENDED_TO_SYSTEM_CLASSLOADER.set(false);
+            return OgnlMockAdvice.class;
+        }
+    }
+
+    private static void putRuntimeMocks(Class<?> runtimeAdviceClass, Class<?> targetClass, Set<String> matchedMethods,
+            MockCommand mockCommand) throws ReflectiveOperationException {
+        for (String methodName : matchedMethods) {
+            if (runtimeAdviceClass == OgnlMockAdvice.class) {
+                OgnlMockAdvice.putMockConfig(targetClass, methodName, mockCommand.getBeforeOgnl(),
+                        mockCommand.getAfterOgnl(), GlobalOptions.strict);
+                continue;
+            }
+            Method method = runtimeAdviceClass.getMethod("putMockConfig", Class.class, String.class, String.class,
+                    String.class, boolean.class);
+            method.invoke(null, targetClass, methodName, mockCommand.getBeforeOgnl(), mockCommand.getAfterOgnl(),
+                    GlobalOptions.strict);
+        }
+    }
+
+    private static void removeRuntimeMock(Class<?> runtimeAdviceClass, Class<?> targetClass)
+            throws ReflectiveOperationException {
+        if (runtimeAdviceClass == OgnlMockAdvice.class) {
+            OgnlMockAdvice.removeMock(targetClass);
+            return;
+        }
+        Method method = runtimeAdviceClass.getMethod("removeMock", Class.class);
+        method.invoke(null, targetClass);
+    }
+
+    private static Set<String> getRuntimeMockedMethods(Class<?> runtimeAdviceClass, Class<?> targetClass)
+            throws ReflectiveOperationException {
+        String[] mockedMethods;
+        if (runtimeAdviceClass == OgnlMockAdvice.class) {
+            mockedMethods = OgnlMockAdvice.getMockedMethods(targetClass);
+        } else {
+            Method method = runtimeAdviceClass.getMethod("getMockedMethods", Class.class);
+            mockedMethods = (String[]) method.invoke(null, targetClass);
+        }
+        Set<String> methodNames = new LinkedHashSet<>();
+        for (String mockedMethod : mockedMethods) {
+            methodNames.add(mockedMethod);
+        }
+        return methodNames;
+    }
+
+    private static Set<String> findMatchedMethods(Class<?> clazz, Matcher<String> methodNameMatcher) {
+        Set<String> matchedMethods = new LinkedHashSet<>();
+        for (Method method : clazz.getDeclaredMethods()) {
+            if (!method.isBridge() && !method.isSynthetic() && methodNameMatcher.matching(method.getName())) {
+                matchedMethods.add(method.getName());
+            }
+        }
+        return matchedMethods;
+    }
+
     private void clearMock(Instrumentation inst) {
         // 从全局 retransform 列表中移除
         // TODO RetransformCommand.deleteRetransformEntry(classPattern, methodPattern,
         // isRegEx);
         // 重新 retransform 以恢复原始字节码
         Set<Class<?>> classes = SearchUtils.searchClass(inst, SearchUtils.classNameMatcher(classPattern, isRegEx));
+        Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
         for (Class<?> clazz : classes) {
             try {
                 inst.retransformClasses(clazz);
             } catch (Exception e) {
                 logger.warn("Failed to retransform class on clear: " + clazz.getName(), e);
             }
-            OgnlMockAdvice.removeMock(clazz);
+            try {
+                removeRuntimeMock(runtimeAdviceClass, clazz);
+            } catch (ReflectiveOperationException e) {
+                logger.warn("Failed to remove runtime mock for class on clear: " + clazz.getName(), e);
+            }
             mockClass.remove(clazz);
         }
     }
 
     private void clearAllMocks(Instrumentation inst) {
         // RetransformCommand.deleteAllRetransformEntry();TODO
+        Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
         for (Class<?> className : new ArrayList<Class<?>>(mockClass)) {
             Set<Class<?>> classes = SearchUtils.searchClass(inst,
                     SearchUtils.classNameMatcher(className.getName(), false));
@@ -323,7 +390,11 @@ public class MockCommand extends AnnotatedCommand {
                 } catch (Exception e) {
                     logger.warn("Failed to retransform class on clear-all: " + clazz.getName(), e);
                 }
-                OgnlMockAdvice.removeMock(clazz);
+                try {
+                    removeRuntimeMock(runtimeAdviceClass, clazz);
+                } catch (ReflectiveOperationException e) {
+                    logger.warn("Failed to remove runtime mock for class on clear-all: " + clazz.getName(), e);
+                }
             }
             mockClass.remove(className);
         }
@@ -339,11 +410,14 @@ public class MockCommand extends AnnotatedCommand {
 
     public static class OgnlMockAdvice {
 
-        static Map<Class<?>, Map<String, MockCommand>> mockCommands = new ConcurrentHashMap<>();
+        private static final String OGNL_STRICT_FIELD_NAME = "_useStricterInvocation";
 
-        public static void putMock(Class<?> clz, MockCommand mockCommand) {
+        static Map<Class<?>, Map<String, MockConfig>> mockCommands = new ConcurrentHashMap<>();
+
+        public static void putMockConfig(Class<?> clz, String methodPattern, String beforeOgnl, String afterOgnl,
+                boolean strict) {
             mockCommands.computeIfAbsent(clz, key -> new ConcurrentHashMap<>())
-                    .put(mockCommand.getMethodPattern(), mockCommand);
+                    .put(methodPattern, new MockConfig(beforeOgnl, afterOgnl, strict));
         }
 
         public static void removeMock(Class<?> clz) {
@@ -351,26 +425,40 @@ public class MockCommand extends AnnotatedCommand {
         }
 
         public static String[] getMockedMethods(Class<?> clz) {
-            Map<String, MockCommand> methodMocks = mockCommands.get(clz);
+            Map<String, MockConfig> methodMocks = mockCommands.get(clz);
             if (methodMocks == null || methodMocks.isEmpty()) {
                 return new String[0];
             }
             return methodMocks.keySet().toArray(new String[0]);
         }
 
-        @net.bytebuddy.asm.Advice.OnMethodEnter(inline = true, skipOn = net.bytebuddy.asm.Advice.OnDefaultValue.class)
-        public static Object onInvokeBefore(
-                @net.bytebuddy.asm.Advice.This(optional = true) Object target,
-                @net.bytebuddy.asm.Advice.AllArguments(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object[] args,
-                @net.bytebuddy.asm.Advice.Origin Class<?> clazz,
-                @net.bytebuddy.asm.Advice.Origin("#m") String methodName,
-                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext) throws Throwable {
+        public static boolean isSkipped(OgnlContext ognlContext) {
+            return ognlContext != null && Boolean.TRUE.equals(ognlContext.skip);
+        }
 
-            ognlContext = OgnlMockAdvice.invoke(target, clazz, methodName, args, false);
-            if (ognlContext == null || !Boolean.TRUE.equals(ognlContext.skip)) {
-                return Boolean.TRUE;
+        public static Completion complete(OgnlContext ognlContext, Class<?> clazz, Object returned, Throwable thrown) {
+            if (ognlContext == null) {
+                return new Completion(returned, thrown);
             }
-            return null;
+
+            ognlContext.setOriginReturnObj(returned);
+            if (!Boolean.TRUE.equals(ognlContext.skip)) {
+                ognlContext.setReturnObj(returned);
+            }
+            ognlContext.setThrowExp(thrown);
+
+            OgnlMockAdvice.invoke(ognlContext, clazz, null, null, true);
+
+            Object finalReturn = returned;
+            Throwable finalThrowable = thrown;
+            if (!Optional.empty().equals(ognlContext.returnObj)) {
+                finalReturn = ognlContext.returnObj;
+                finalThrowable = null;
+            }
+            if (ognlContext.getThrowExp() != null) {
+                finalThrowable = ognlContext.getThrowExp();
+            }
+            return new Completion(finalReturn, finalThrowable);
         }
 
         public static OgnlContext invoke(Object target,
@@ -378,7 +466,7 @@ public class MockCommand extends AnnotatedCommand {
                 String methodName,
                 Object[] args,
                 boolean isAfter) {
-            MockCommand mockCommand = getMockCommand(clazz, methodName);
+            MockConfig mockConfig = getMockCommand(clazz, methodName);
             if (isAfter && target instanceof OgnlContext) {
                 OgnlContext existingContext = (OgnlContext) target;
                 if (clazz == null) {
@@ -387,9 +475,9 @@ public class MockCommand extends AnnotatedCommand {
                 if (methodName == null && existingContext.getMethod() != null) {
                     methodName = existingContext.getMethod().getName();
                 }
-                mockCommand = getMockCommand(clazz, methodName);
+                mockConfig = getMockCommand(clazz, methodName);
             }
-            if (mockCommand == null) {
+            if (mockConfig == null) {
                 return null;
             }
 
@@ -397,21 +485,21 @@ public class MockCommand extends AnnotatedCommand {
             String express;
             if (isAfter) {
                 ognlContext = (OgnlContext) target;
-                if (mockCommand.getAfterOgnl() == null) {
+                if (mockConfig.getAfterOgnl() == null) {
                     return ognlContext;
                 }
-                express = mockCommand.getAfterOgnl();
+                express = mockConfig.getAfterOgnl();
             } else {
                 ognlContext = OgnlContext.init(clazz.getClassLoader(), clazz, resolveArthasMethod(clazz, methodName),
                         target, args, null);
-                if (mockCommand.getBeforeOgnl() == null) {
+                if (mockConfig.getBeforeOgnl() == null) {
                     return ognlContext;
                 }
-                express = mockCommand.getBeforeOgnl();
+                express = mockConfig.getBeforeOgnl();
             }
 
             try {
-                getExpressionResult(express, ognlContext);
+                getExpressionResult(express, ognlContext, mockConfig.isStrict());
             } catch (Throwable e) {
                 throw MockCommand.propagateMockException(e);
             }
@@ -419,47 +507,96 @@ public class MockCommand extends AnnotatedCommand {
             return ognlContext;
         }
 
-        @net.bytebuddy.asm.Advice.OnMethodExit(inline = true, onThrowable = Throwable.class)
-        public static void onInvokeAfter(
-                @net.bytebuddy.asm.Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object returned,
-                @net.bytebuddy.asm.Advice.Origin Class<?> clazz,
-                @net.bytebuddy.asm.Advice.Thrown(readOnly = false, typing = Assigner.Typing.DYNAMIC) Throwable thrown,
-                @net.bytebuddy.asm.Advice.Local("ognlContext") OgnlContext ognlContext) {
-            if (ognlContext == null) {
-                return;
-            }
-
-            ognlContext.setOriginReturnObj(returned);
-            // Keep before-mock return value when the original method is skipped.
-            if (!Boolean.TRUE.equals(ognlContext.skip)) {
-                ognlContext.setReturnObj(returned);
-            }
-            ognlContext.setThrowExp(thrown);
-
-            OgnlMockAdvice.invoke(ognlContext, clazz, null, null, true);
-
-            if (!Optional.empty().equals(ognlContext.returnObj)) {
-                returned = ognlContext.returnObj;
-                thrown = null;
-            }
-            if (ognlContext.getThrowExp() != null) {
-                thrown = ognlContext.getThrowExp();
-            }
-        }
-
-        private static Object getExpressionResult(String express, OgnlContext ognlContext) throws ExpressException {
+        private static Object getExpressionResult(String express, OgnlContext ognlContext, boolean strict)
+                throws ExpressException {
+            syncStrictInvocation(strict);
             return ExpressFactory.threadLocalExpress(ognlContext).get(express);
         }
 
-        private static MockCommand getMockCommand(Class<?> clazz, String methodName) {
+        private static void syncStrictInvocation(boolean strict) {
+            try {
+                Field field = OgnlRuntime.class.getDeclaredField(OGNL_STRICT_FIELD_NAME);
+                field.setAccessible(true);
+                boolean current = field.getBoolean(null);
+                if (current != strict) {
+                    updateStrictField(field, strict);
+                }
+            } catch (ReflectiveOperationException e) {
+                logger.debug("Failed to sync OGNL strict invocation for mock command.", e);
+            }
+        }
+
+        private static void updateStrictField(Field field, boolean value) throws ReflectiveOperationException {
+            try {
+                field.setBoolean(null, value);
+            } catch (IllegalAccessException e) {
+                updateStrictFieldWithUnsafe(field, value);
+            }
+        }
+
+        private static void updateStrictFieldWithUnsafe(Field field, boolean value) throws ReflectiveOperationException {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field theUnsafeField = unsafeClass.getDeclaredField("theUnsafe");
+            theUnsafeField.setAccessible(true);
+            Object unsafe = theUnsafeField.get(null);
+            Object staticFieldBase = unsafeClass.getMethod("staticFieldBase", Field.class).invoke(unsafe, field);
+            long staticFieldOffset = ((Number) unsafeClass.getMethod("staticFieldOffset", Field.class)
+                    .invoke(unsafe, field)).longValue();
+            unsafeClass.getMethod("putBoolean", Object.class, long.class, boolean.class)
+                    .invoke(unsafe, staticFieldBase, staticFieldOffset, value);
+        }
+
+        private static MockConfig getMockCommand(Class<?> clazz, String methodName) {
             if (clazz == null || methodName == null) {
                 return null;
             }
-            Map<String, MockCommand> methodMocks = mockCommands.get(clazz);
+            Map<String, MockConfig> methodMocks = mockCommands.get(clazz);
             if (methodMocks == null) {
                 return null;
             }
             return methodMocks.get(methodName);
+        }
+
+        private static final class MockConfig {
+            private final String beforeOgnl;
+            private final String afterOgnl;
+            private final boolean strict;
+
+            private MockConfig(String beforeOgnl, String afterOgnl, boolean strict) {
+                this.beforeOgnl = beforeOgnl;
+                this.afterOgnl = afterOgnl;
+                this.strict = strict;
+            }
+
+            private String getBeforeOgnl() {
+                return beforeOgnl;
+            }
+
+            private String getAfterOgnl() {
+                return afterOgnl;
+            }
+
+            private boolean isStrict() {
+                return strict;
+            }
+        }
+
+        public static final class Completion {
+            private final Object returnValue;
+            private final Throwable throwable;
+
+            private Completion(Object returnValue, Throwable throwable) {
+                this.returnValue = returnValue;
+                this.throwable = throwable;
+            }
+
+            public Object getReturnValue() {
+                return returnValue;
+            }
+
+            public Throwable getThrowable() {
+                return throwable;
+            }
         }
 
         private static ArthasMethod resolveArthasMethod(Class<?> clazz, String methodName) {
