@@ -1,13 +1,22 @@
 package io.github.ly1806620741.arthas.plugin;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import io.github.ly1806620741.arthas.plugin.itapp.ArthasSpringBootProxyTargetApp;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -18,14 +27,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 class ArthasBootIntegrationIT {
 
-    private static final Pattern MOCKED_OUTPUT_PATTERN = Pattern.compile("(?m)^-?\\d+=99991\\*99989\\s*$");
     private static final String STRICT_PROMPT_FRAGMENT = "execute `options strict false`";
 
     @Test
@@ -53,8 +60,6 @@ class ArthasBootIntegrationIT {
             Path enhancedCoreJar = tempDir.resolve("arthas-core.jar");
             Assertions.assertTrue(jarContains(enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/MockCommand.class"),
                     "增强后的 arthas-core.jar 应包含 MockCommand");
-//            Assertions.assertTrue(jarContains(enhancedCoreJar, "net/bytebuddy/matcher/ElementMatchers.class"),
-//                    "增强后的 arthas-core.jar 应包含 ByteBuddy 运行时依赖");
 
             Path mathGameLog = tempDir.resolve("math-game.log");
             ProcessBuilder mathGameBuilder = new ProcessBuilder(javaExecutable(), "-jar", "math-game.jar");
@@ -102,6 +107,100 @@ class ArthasBootIntegrationIT {
                 mathGameProcess.destroy();
                 if (!mathGameProcess.waitFor(10, TimeUnit.SECONDS)) {
                     mathGameProcess.destroyForcibly();
+                }
+            }
+            deleteRecursively(tempDir);
+        }
+    }
+
+    @Test
+    @DisplayName("使用 original 插件增强官方 arthas-core 后验证 springboot --proxy-http 可注入转发路由")
+    void artifactRegressionShouldInjectSpringBootProxyRoute() throws Exception {
+        Path moduleDir = moduleDir();
+        Path targetDir = moduleDir.resolve("target");
+        Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
+        Path originalPluginJar = findSingleFile(targetDir, "original-arthas-plugin-*.jar");
+
+        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
+        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 original-arthas-plugin 制品");
+
+        Path tempDir = Files.createTempDirectory("arthas-springboot-proxy-regression-");
+        Process springBootProcess = null;
+        HttpServer backendServer = null;
+        try {
+            unzip(arthasBinZip, tempDir);
+            ProcessResult mergeResult = runProcess(command(javaExecutable(), "-jar", originalPluginJar.toString()),
+                    tempDir, tempDir.resolve("merge.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, mergeResult.exitCode,
+                    () -> "增强 arthas-core.jar 失败，输出:\n" + mergeResult.output);
+
+            Path enhancedCoreJar = tempDir.resolve("arthas-core.jar");
+            Assertions.assertTrue(
+                    jarContains(enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/SpringBootCommand.class"),
+                    "增强后的 arthas-core.jar 应包含 SpringBootCommand");
+
+            int backendPort = findFreePort();
+            backendServer = startEchoServer(backendPort);
+
+            int appPort = findFreePort();
+            Path springBootLog = tempDir.resolve("spring-boot-app.log");
+            ProcessBuilder springBootBuilder = new ProcessBuilder(
+                    command(javaExecutable(), "-cp", testRuntimeClasspath(),
+                            ArthasSpringBootProxyTargetApp.class.getName(), "--server.port=" + appPort));
+            springBootBuilder.directory(moduleDir.toFile());
+            springBootBuilder.redirectErrorStream(true);
+            springBootBuilder.redirectOutput(springBootLog.toFile());
+            springBootProcess = springBootBuilder.start();
+            String targetPid = processId(springBootProcess);
+
+            waitForHttpText(new URL("http://127.0.0.1:" + appPort + "/sample"), "sample", Duration.ofSeconds(40));
+            ensureProcessAlive(springBootProcess, springBootLog);
+
+            int telnetPort = findFreePort();
+            String routePattern = "/arthas/plain/**";
+            String springbootCommand = "help springboot;springboot --proxy-http --route " + routePattern
+                    + " --target-host 127.0.0.1 --target-port " + backendPort;
+            ProcessResult attachResult = runProcess(
+                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
+                            "--target-ip", "127.0.0.1",
+                            "--telnet-port", Integer.toString(telnetPort),
+                            "--http-port", "-1",
+                            "-c", springbootCommand,
+                            targetPid),
+                    tempDir, tempDir.resolve("springboot-attach.log"), Duration.ofSeconds(90));
+
+            Assertions.assertEquals(0, attachResult.exitCode,
+                    () -> "arthas-boot 附着/执行 springboot 命令失败，输出:\n" + attachResult.output);
+            Assertions.assertFalse(attachResult.output.contains("command not found"),
+                    () -> "springboot 命令未生效，输出:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("help springboot")
+                            && attachResult.output.contains("Route injected successfully: " + routePattern + " -> 127.0.0.1:" + backendPort),
+                    () -> "附着输出中未发现 springboot 命令执行成功痕迹:\n" + attachResult.output);
+
+            String proxiedOutput = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/arthas/plain/api/test?foo=bar"),
+                    "GET /api/test?foo=bar", Duration.ofSeconds(20));
+            Assertions.assertTrue(proxiedOutput.contains("GET /api/test?foo=bar"),
+                    () -> "未通过 springboot 代理观察到后端响应:\n" + proxiedOutput);
+
+            ProcessResult stopResult = runProcess(
+                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
+                            "--target-ip", "127.0.0.1",
+                            "--telnet-port", Integer.toString(telnetPort),
+                            "--http-port", "-1",
+                            "-c", "stop",
+                            targetPid),
+                    tempDir, tempDir.resolve("springboot-stop.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, stopResult.exitCode,
+                    () -> "stop 命令执行失败，输出:\n" + stopResult.output);
+        } finally {
+            if (backendServer != null) {
+                backendServer.stop(0);
+            }
+            if (springBootProcess != null) {
+                springBootProcess.destroy();
+                if (!springBootProcess.waitFor(10, TimeUnit.SECONDS)) {
+                    springBootProcess.destroyForcibly();
                 }
             }
             deleteRecursively(tempDir);
@@ -180,6 +279,14 @@ class ArthasBootIntegrationIT {
         return Paths.get(System.getProperty("java.home"), "bin", "java").toString();
     }
 
+    private static String testRuntimeClasspath() {
+        String classpath = System.getProperty("surefire.test.class.path");
+        if (classpath == null || classpath.trim().isEmpty()) {
+            classpath = System.getProperty("java.class.path");
+        }
+        return classpath;
+    }
+
     private static List<String> command(String... args) {
         List<String> command = new ArrayList<String>();
         for (String arg : args) {
@@ -206,6 +313,43 @@ class ArthasBootIntegrationIT {
             throw new IllegalStateException("进程超时未退出: " + command + "\n输出:\n" + output);
         }
         return new ProcessResult(process.exitValue(), output);
+    }
+
+    private static HttpServer startEchoServer(int port) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        server.createContext("/", new EchoHandler());
+        server.start();
+        return server;
+    }
+
+    private static String processId(Process process) throws Exception {
+        try {
+            Object pid = Process.class.getMethod("pid").invoke(process);
+            if (pid != null) {
+                return String.valueOf(pid);
+            }
+        } catch (NoSuchMethodException ignore) {
+            // fall through for JDK 8 compile/runtime compatibility
+        }
+        try {
+            java.lang.reflect.Field pidField = process.getClass().getDeclaredField("pid");
+            pidField.setAccessible(true);
+            return String.valueOf(pidField.get(process));
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("无法解析目标进程 pid: " + process.getClass().getName(), e);
+        }
+    }
+
+    private static void ensureProcessAlive(Process process, Path logFile) throws IOException {
+        try {
+            int exitCode = process.exitValue();
+            String log = Files.exists(logFile)
+                    ? new String(Files.readAllBytes(logFile), StandardCharsets.UTF_8)
+                    : "";
+            throw new IllegalStateException("目标 Spring Boot 进程已提前退出，exitCode=" + exitCode + "，日志:\n" + log);
+        } catch (IllegalThreadStateException ignore) {
+            // still alive
+        }
     }
 
     private static boolean jarContains(Path jarFile, String entryName) throws IOException {
@@ -244,6 +388,34 @@ class ArthasBootIntegrationIT {
                 : "";
     }
 
+    private static String waitForHttpText(URL url, String expectedText, Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        String lastResponse = "";
+        while (System.nanoTime() < deadline) {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(2000);
+                connection.setReadTimeout(2000);
+                connection.setRequestMethod("GET");
+                int status = connection.getResponseCode();
+                InputStream bodyStream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                lastResponse = bodyStream == null ? "" : new String(readAllBytes(bodyStream), StandardCharsets.UTF_8);
+                if (status == 200 && lastResponse.contains(expectedText)) {
+                    return lastResponse;
+                }
+            } catch (IOException e) {
+                lastResponse = e.getMessage() == null ? e.toString() : e.getMessage();
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+            Thread.sleep(300);
+        }
+        return lastResponse;
+    }
+
     private static int findFreePort() throws IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
             socket.setReuseAddress(true);
@@ -267,6 +439,20 @@ class ArthasBootIntegrationIT {
                 }
                 zipInputStream.closeEntry();
             }
+        }
+    }
+
+    private static byte[] readAllBytes(InputStream inputStream) throws IOException {
+        if (inputStream == null) {
+            return new byte[0];
+        }
+        try (InputStream in = inputStream; ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, read);
+            }
+            return outputStream.toByteArray();
         }
     }
 
@@ -295,6 +481,22 @@ class ArthasBootIntegrationIT {
         private ProcessResult(int exitCode, String output) {
             this.exitCode = exitCode;
             this.output = output;
+        }
+    }
+
+    private static final class EchoHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String body = new String(readAllBytes(exchange.getRequestBody()), StandardCharsets.UTF_8);
+            String query = exchange.getRequestURI().getRawQuery();
+            String payload = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath()
+                    + (query == null ? "" : "?" + query)
+                    + (body.isEmpty() ? "" : " " + body);
+            byte[] response = payload.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            try (OutputStream outputStream = exchange.getResponseBody()) {
+                outputStream.write(response);
+            }
         }
     }
 }

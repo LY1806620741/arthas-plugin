@@ -47,7 +47,7 @@
                 byline="true"/>
 
         <replaceregexp
-                file="${patched.builtin-command-pack.file}"
+                file="${patched.src.dir}/com/taobao/arthas/core/command/BuiltinCommandPack.java"
                 match="(commandClassList\.add\(StopCommand\.class\);)"
                 replace="\1${line.separator}        commandClassList.add(MockCommand.class);${line.separator}        commandClassList.add(SpringBootCommand.class);"
                 byline="true"/>
