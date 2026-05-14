@@ -3,6 +3,7 @@
 基于 Arthas 4.1.7 的扩展工程，当前主要提供：
 
 - `mock` 自定义命令
+- `springboot` 额外springboot命令工具集
 - `ObjectView` 中对 Jacoco 注入字段的过滤能力
 
 ## 构建
@@ -22,6 +23,9 @@ mvn -pl arthas-plugin -DskipTests compile
 
 # 运行 mock 相关单测
 mvn -pl arthas-plugin -Dtest=MockCommandTest test
+
+# 运行 springboot 命令相关单测
+mvn -pl arthas-plugin -Dtest=SpringBootCommandTest test
 
 # 运行制品级回归验证
 mvn -pl arthas-plugin -Dit.test=ArthasBootIntegrationIT verify
@@ -82,6 +86,34 @@ By default, strict mode is true, not allowed to set object properties.
 Want to set object properties, execute `options strict false`
 ```
 
+## springboot 命令说明
+
+`springboot` 是独立工具集。当前提供 `--proxy-http` 能力：
+
+- 检查当前 JVM 中是否存在 Spring MVC Controller
+- 若存在，则向 Spring MVC 动态注入一条路由
+- 将该路由下的请求转发到 Arthas HTTP 端口（默认 `127.0.0.1:8563`）
+- 可选开启 AES 转发加密，默认 key=`arthas`，iv=`0123456789abcdef`
+
+典型用法：
+
+```text
+# 使用默认路由 /arthas/** -> 127.0.0.1:8563
+springboot --proxy-http
+
+# 自定义转发路由与 Arthas HTTP 端口
+springboot --proxy-http --route /arthas/** --target-port 8563
+
+# 开启 AES 加密转发
+springboot --proxy-http --encrypt --encrypt-key arthas --encrypt-iv 0123456789abcdef
+```
+
+执行成功后会返回类似结果：
+
+```text
+Route injected successfully: /arthas/** -> 127.0.0.1:8563
+```
+
 ## 官方 arthas-core 增强方式
 
 如果你已经有一份官方 `arthas-bin.zip`，也可以使用 `original-arthas-plugin-0.0.1.jar` 在解压目录内直接增强其中的 `arthas-core.jar`：
@@ -102,22 +134,6 @@ arthas-core.jar.bak
 如果需要通过文本方式传输插件包，可使用 base64：
 
 ```zsh
-base64 < arthas-plugin-0.0.1.jar | tr -d '\n'
-echo "..." | base64 -d > arthas-plugin-0.0.1.jar
+base64 < original-arthas-plugin-0.0.1.jar | tr -d '\n'
+echo "..." | base64 -d > original-arthas-plugin-0.0.1.jar
 ```
-
-## 当前验证范围
-
-当前仓库内已覆盖两层验证：
-
-1. **单元测试**
-   - `MockCommandTest`
-   - `ObjectViewTest`
-   - `ArthasRuntimeStartupTest`
-
-2. **制品级集成测试**
-   - 解压 `arthas-bin.zip`
-   - 使用 `original-arthas-plugin-0.0.1.jar` 增强官方 `arthas-core.jar`
-   - 启动 `math-game.jar`
-   - 通过 `arthas-boot.jar` attach
-   - 校验 `mock` 命令可见，并在默认 strict 下给出手动关闭提示

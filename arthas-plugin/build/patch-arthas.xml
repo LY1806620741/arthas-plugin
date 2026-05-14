@@ -43,13 +43,13 @@
         <replaceregexp
                 file="${patched.builtin-command-pack.file}"
                 match="(import com\.taobao\.middleware\.cli\.annotations\.Name;)"
-                replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;"
+                replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;${line.separator}import io.github.ly1806620741.arthas.plugin.SpringBootCommand;"
                 byline="true"/>
 
         <replaceregexp
                 file="${patched.builtin-command-pack.file}"
                 match="(commandClassList\.add\(StopCommand\.class\);)"
-                replace="\1${line.separator}        commandClassList.add(MockCommand.class);"
+                replace="\1${line.separator}        commandClassList.add(MockCommand.class);${line.separator}        commandClassList.add(SpringBootCommand.class);"
                 byline="true"/>
     </target>
 </project>
