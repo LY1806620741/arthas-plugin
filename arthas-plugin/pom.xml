@@ -16,7 +16,6 @@
     <url>https://github.com/LY1806620741/arthas-plugin</url>
 
     <properties>
-        <final.jar.name>arthas-core.jar</final.jar.name>
         <maven.antrun.plugin.version>3.2.0</maven.antrun.plugin.version>
         <maven.jar.plugin.version>3.5.0</maven.jar.plugin.version>
         <maven.failsafe.plugin.version>3.2.5</maven.failsafe.plugin.version>
@@ -168,7 +167,6 @@
     </dependencies>
 
     <build>
-        <finalName>original-${project.artifactId}-${project.version}</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

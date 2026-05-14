@@ -4,7 +4,7 @@
         <!-- 1. 插入 jacoco 过滤 -->
         <echo message="add jacoco filter"/>
 
-        <replace file="${patched.global-options.file}">
+        <replace file="${patched.src.dir}/com/taobao/arthas/core/GlobalOptions.java">
             <replacetoken><![CDATA[
     /**
      * 是否打开verbose 开关
@@ -27,7 +27,7 @@
 ]]></replacevalue>
         </replace>
 
-        <replace file="${patched.object-view.file}"
+        <replace file="${patched.src.dir}/com/taobao/arthas/core/view/ObjectView.java"
                  token="field.setAccessible(true);">
             <replacevalue><![CDATA[
                         if (GlobalOptions.ignoreJacocoField && field.getName().startsWith("$jacoco")) {
@@ -41,7 +41,7 @@
         <echo message="add mock command"/>
 
         <replaceregexp
-                file="${patched.builtin-command-pack.file}"
+                file="${patched.src.dir}/com/taobao/arthas/core/command/BuiltinCommandPack.java"
                 match="(import com\.taobao\.middleware\.cli\.annotations\.Name;)"
                 replace="\1${line.separator}import io.github.ly1806620741.arthas.plugin.MockCommand;${line.separator}import io.github.ly1806620741.arthas.plugin.SpringBootCommand;"
                 byline="true"/>
