@@ -88,7 +88,7 @@ jobs:
         run: |
           cd arthas-plugin/target
           shopt -s nullglob
-          for file in original-arthas-plugin-*.jar; do
+          for file in arthas-plugin-*.jar; do
             sha256sum "$file" > "$file.sha256"
           done
 
@@ -97,8 +97,8 @@ jobs:
         with:
           name: arthas-plugin-release-assets
           path: |
-            arthas-plugin/target/original-arthas-plugin-*.jar
-            arthas-plugin/target/original-arthas-plugin-*.jar.sha256
+            arthas-plugin/target/arthas-plugin-*.jar
+            arthas-plugin/target/arthas-plugin-*.jar.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -125,5 +125,5 @@ jobs:
           fail_on_unmatched_files: true
           overwrite_files: true
           files: |
-            release-assets/original-arthas-plugin-*.jar
-            release-assets/original-arthas-plugin-*.jar.sha256
+            release-assets/arthas-plugin-*.jar
+            release-assets/arthas-plugin-*.jar.sha256

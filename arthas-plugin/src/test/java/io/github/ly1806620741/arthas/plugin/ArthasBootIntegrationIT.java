@@ -41,10 +41,10 @@ class ArthasBootIntegrationIT {
         Path moduleDir = moduleDir();
         Path targetDir = moduleDir.resolve("target");
         Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
-        Path originalPluginJar = findSingleFile(targetDir, "original-arthas-plugin-*.jar");
+        Path originalPluginJar = findSingleFile(targetDir, "arthas-plugin-*.jar");
 
         Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
-        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 original-arthas-plugin 制品");
+        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 arthas-plugin 制品");
 
         Path tempDir = Files.createTempDirectory("arthas-artifact-regression-");
         Process mathGameProcess = null;
@@ -119,10 +119,10 @@ class ArthasBootIntegrationIT {
         Path moduleDir = moduleDir();
         Path targetDir = moduleDir.resolve("target");
         Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
-        Path originalPluginJar = findSingleFile(targetDir, "original-arthas-plugin-*.jar");
+        Path originalPluginJar = findSingleFile(targetDir, "arthas-plugin-*.jar");
 
         Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
-        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 original-arthas-plugin 制品");
+        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 arthas-plugin 制品");
 
         Path tempDir = Files.createTempDirectory("arthas-springboot-proxy-regression-");
         Process springBootProcess = null;
