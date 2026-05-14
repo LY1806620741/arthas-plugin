@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +16,7 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -31,10 +33,10 @@ class ArthasBootIntegrationIT {
     void artifactRegressionShouldPromptManualStrictDisableBeforeMock() throws Exception {
         Path moduleDir = moduleDir();
         Path targetDir = moduleDir.resolve("target");
-        Path arthasBinZip = targetDir.resolve("arthas-bin.zip");
+        Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
         Path originalPluginJar = findSingleFile(targetDir, "original-arthas-plugin-*.jar");
 
-        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), "arthas-bin.zip 应在 package 阶段生成");
+        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
         Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 original-arthas-plugin 制品");
 
         Path tempDir = Files.createTempDirectory("arthas-artifact-regression-");
@@ -123,6 +125,55 @@ class ArthasBootIntegrationIT {
             }
         }
         throw new IOException("未找到文件: " + glob + " in " + directory);
+    }
+
+    private static Path resolveArthasBinZip(Path moduleDir, Path targetDir) throws Exception {
+        Path packagedZip = targetDir.resolve("arthas-bin.zip");
+        if (Files.isRegularFile(packagedZip)) {
+            return packagedZip;
+        }
+
+        String arthasVersion = readArthasVersion();
+        Path mavenZip = Paths.get(System.getProperty("user.home"), ".m2", "repository",
+                "com", "taobao", "arthas", "arthas-packaging", arthasVersion,
+                "arthas-packaging-" + arthasVersion + "-bin.zip");
+        if (Files.isRegularFile(mavenZip)) {
+            return mavenZip;
+        }
+
+        fetchArthasBinZip(moduleDir, arthasVersion);
+        if (Files.isRegularFile(mavenZip)) {
+            return mavenZip;
+        }
+
+        throw new IOException("未找到 arthas-bin.zip，既不存在于 target 目录，也不存在于本地 Maven 仓库: " + mavenZip);
+    }
+
+    private static void fetchArthasBinZip(Path moduleDir, String arthasVersion) throws Exception {
+        String artifact = "com.taobao.arthas:arthas-packaging:" + arthasVersion + ":zip:bin";
+        ProcessResult downloadResult = runProcess(
+                command("mvn", "-q", "dependency:get", "-Dartifact=" + artifact),
+                moduleDir.getParent(),
+                moduleDir.resolve("target").resolve("fetch-arthas-bin.log"),
+                Duration.ofMinutes(3));
+        Assertions.assertEquals(0, downloadResult.exitCode,
+                () -> "自动拉取 arthas bin 失败，artifact=" + artifact + "\n输出:\n" + downloadResult.output);
+    }
+
+    private static String readArthasVersion() throws IOException {
+        try (InputStream inputStream = ArthasBootIntegrationIT.class.getClassLoader()
+                .getResourceAsStream("version.properties")) {
+            if (inputStream == null) {
+                throw new IOException("未找到 version.properties");
+            }
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            String version = properties.getProperty("arthas.spec.version");
+            if (version == null || version.trim().isEmpty() || version.contains("${")) {
+                throw new IOException("version.properties 中的 arthas.spec.version 无效: " + version);
+            }
+            return version.trim();
+        }
     }
 
     private static String javaExecutable() {

@@ -17,11 +17,6 @@
 
     <properties>
         <final.jar.name>arthas-core.jar</final.jar.name>
-        <arthas.bin.zip.name>arthas-bin.zip</arthas.bin.zip.name>
-        <arthas.deps.package>com.alibaba.arthas.deps</arthas.deps.package>
-        <arthas.packaging.artifactId>arthas-packaging</arthas.packaging.artifactId>
-        <arthas.packaging.bin.classifier>bin</arthas.packaging.bin.classifier>
-        <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
         <maven.antrun.plugin.version>3.2.0</maven.antrun.plugin.version>
         <maven.jar.plugin.version>3.5.0</maven.jar.plugin.version>
         <maven.failsafe.plugin.version>3.2.5</maven.failsafe.plugin.version>
@@ -32,9 +27,6 @@
         <mockito.version>5.21.0</mockito.version>
         <patch.ant.file>${project.basedir}/build/patch-arthas.xml</patch.ant.file>
         <patched.src.dir>${project.build.directory}/patched-src</patched.src.dir>
-        <patched.global-options.file>${patched.src.dir}/com/taobao/arthas/core/GlobalOptions.java</patched.global-options.file>
-        <patched.object-view.file>${patched.src.dir}/com/taobao/arthas/core/view/ObjectView.java</patched.object-view.file>
-        <patched.builtin-command-pack.file>${patched.src.dir}/com/taobao/arthas/core/command/BuiltinCommandPack.java</patched.builtin-command-pack.file>
     </properties>
 
     <dependencies>
@@ -176,78 +168,12 @@
     </dependencies>
 
     <build>
+        <finalName>original-${project.artifactId}-${project.version}</finalName>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>${maven.shade.plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>shade-plugin-jar</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <relocations>
-                                <!-- https://github.com/hengyunabc/arthas-repackage-deps -->
-                                <relocation>
-                                    <pattern>com.alibaba.fastjson2</pattern>
-                                    <shadedPattern>${arthas.deps.package}.com.alibaba.fastjson2</shadedPattern>
-                                </relocation>
-                            </relocations>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <!-- 下载arthas-core.jar + 用项目class覆盖 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
                 <executions>
-                    <!-- 下载官方 Arthas 二进制包到 target 目录 -->
-                    <execution>
-                        <id>copy-arthas-bin-zip</id>
-                        <phase>prepare-package</phase>
-                        <goals>
-                            <goal>copy</goal>
-                        </goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>com.taobao.arthas</groupId>
-                                    <artifactId>${arthas.packaging.artifactId}</artifactId>
-                                    <version>${arthas.version}</version>
-                                    <classifier>${arthas.packaging.bin.classifier}</classifier>
-                                    <type>zip</type>
-                                    <outputDirectory>${project.build.directory}</outputDirectory>
-                                    <destFileName>${arthas.bin.zip.name}</destFileName>
-                                    <overWrite>true</overWrite>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>unpack-arthas-core</id>
-                        <phase>prepare-package</phase>
-                        <goals>
-                            <goal>unpack</goal>
-                        </goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>com.taobao.arthas</groupId>
-                                    <artifactId>${arthas.packaging.artifactId}</artifactId>
-                                    <version>${arthas.version}</version>
-                                    <classifier>${arthas.packaging.bin.classifier}</classifier>
-                                    <type>zip</type>
-                                    <outputDirectory>${project.build.directory}</outputDirectory>
-                                    <includes>**/arthas-core.jar</includes>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
-                    </execution>
                     <execution>
                         <id>unpack-arthas-core-sources</id>
                         <phase>generate-sources</phase>
@@ -287,33 +213,11 @@
                                 <ant antfile="${patch.ant.file}"
                                     target="patch-arthas-sources"
                                     inheritAll="true"/>
-
                             </target>
                         </configuration>
                         <goals>
                             <goal>run</goal>
                         </goals>
-                    </execution>
-
-                    <execution>
-                        <id>merge-patched-classes-into-arthas-core</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <zip destfile="${project.build.directory}/${final.jar.name}"
-                                    update="true">
-                                    <fileset dir="${project.build.outputDirectory}">
-                                        <exclude name="META-INF/MANIFEST.MF" />
-                                        <exclude
-                                            name="io/github/ly1806620741/arthas/ArthasJarMerger.class" />
-                                    </fileset>
-                                </zip>
-                                <echo message="✅ 已合并文件到 ${final.jar.name} ${arthas.version}" />
-                            </target>
-                        </configuration>
                     </execution>
                 </executions>
             </plugin>
