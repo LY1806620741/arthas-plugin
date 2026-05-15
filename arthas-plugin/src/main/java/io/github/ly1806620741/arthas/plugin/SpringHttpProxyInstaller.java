@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -16,8 +17,10 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
 
@@ -45,9 +48,9 @@ final class SpringHttpProxyInstaller {
 	private SpringHttpProxyInstaller() {
 	}
 
-	static int install(SpringProxyConfig config) throws Exception {
+	static int install(SpringProxyConfig config, Instrumentation instrumentation) throws Exception {
 		int installed = 0;
-		for (Object applicationContext : findApplicationContexts()) {
+		for (Object applicationContext : findApplicationContexts(instrumentation)) {
 			Object handlerMapping = findHandlerMappingWithControllers(applicationContext);
 			if (handlerMapping == null) {
 				continue;
@@ -58,15 +61,52 @@ final class SpringHttpProxyInstaller {
 		return installed;
 	}
 
-	private static Collection<Object> findApplicationContexts() throws Exception {
-		Class<?> liveBeansViewClass = Class.forName(LIVE_BEANS_VIEW_CLASS, false, ClassLoader.getSystemClassLoader());
-		Field applicationContextsField = liveBeansViewClass.getDeclaredField(APPLICATION_CONTEXTS_FIELD);
-		applicationContextsField.setAccessible(true);
-		Object value = applicationContextsField.get(null);
-		if (!(value instanceof Collection)) {
-			return Collections.emptyList();
+	static Collection<Object> findApplicationContexts(Instrumentation instrumentation) throws Exception {
+		Set<Object> applicationContexts = new LinkedHashSet<Object>();
+		for (ClassLoader classLoader : candidateClassLoaders(instrumentation)) {
+			Class<?> liveBeansViewClass = loadClassQuietly(LIVE_BEANS_VIEW_CLASS, classLoader);
+			if (liveBeansViewClass == null) {
+				continue;
+			}
+			Field applicationContextsField = liveBeansViewClass.getDeclaredField(APPLICATION_CONTEXTS_FIELD);
+			applicationContextsField.setAccessible(true);
+			Object value = applicationContextsField.get(null);
+			if (value instanceof Collection) {
+				applicationContexts.addAll((Collection<?>) value);
+			}
 		}
-		return (Collection<Object>) value;
+		return applicationContexts.isEmpty() ? Collections.<Object>emptyList() : applicationContexts;
+	}
+
+	private static Set<ClassLoader> candidateClassLoaders(Instrumentation instrumentation) {
+		Set<ClassLoader> classLoaders = new LinkedHashSet<ClassLoader>();
+		addClassLoaderHierarchy(classLoaders, Thread.currentThread().getContextClassLoader());
+		addClassLoaderHierarchy(classLoaders, SpringHttpProxyInstaller.class.getClassLoader());
+		addClassLoaderHierarchy(classLoaders, ClassLoader.getSystemClassLoader());
+		for (Thread thread : Thread.getAllStackTraces().keySet()) {
+			addClassLoaderHierarchy(classLoaders, thread.getContextClassLoader());
+		}
+		if (instrumentation != null) {
+			for (Class<?> loadedClass : instrumentation.getAllLoadedClasses()) {
+				addClassLoaderHierarchy(classLoaders, loadedClass.getClassLoader());
+			}
+		}
+		return classLoaders;
+	}
+
+	private static void addClassLoaderHierarchy(Set<ClassLoader> classLoaders, ClassLoader classLoader) {
+		ClassLoader current = classLoader;
+		while (current != null && classLoaders.add(current)) {
+			current = current.getParent();
+		}
+	}
+
+	private static Class<?> loadClassQuietly(String className, ClassLoader classLoader) {
+		try {
+			return Class.forName(className, false, classLoader);
+		} catch (Throwable ignore) {
+			return null;
+		}
 	}
 
 	private static Object findHandlerMappingWithControllers(Object applicationContext) throws Exception {

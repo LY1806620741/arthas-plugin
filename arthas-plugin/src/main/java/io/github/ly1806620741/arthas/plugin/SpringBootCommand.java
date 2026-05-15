@@ -76,7 +76,8 @@ public class SpringBootCommand extends AnnotatedCommand {
         try {
             SpringHttpProxyInstaller.SpringProxyConfig config = new SpringHttpProxyInstaller.SpringProxyConfig(
                     routePattern, targetHost, targetPort, encrypt, encryptKey, encryptIv);
-            int installed = SpringHttpProxyInstaller.install(config);
+            int installed = SpringHttpProxyInstaller.install(config,
+                    process.session() == null ? null : process.session().getInstrumentation());
             if (installed <= 0) {
                 process.end(-1, "No Spring Boot controllers found in current JVM.");
                 return;
