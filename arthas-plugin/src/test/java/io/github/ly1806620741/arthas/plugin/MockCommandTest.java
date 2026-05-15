@@ -232,6 +232,28 @@ public class MockCommandTest {
         Assertions.assertEquals("mock-cglib", proxy.value());
     }
 
+    @Test
+    @DisplayName("测试 spring cglib mock 会使用安装时捕获的 strict 配置")
+    void testSpringCglibMockUsesCapturedStrictSettingAtRuntime() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        CglibProxyTarget proxy = createCglibProxy();
+        MockCommand mockCommand = buildAfterMockCommand(proxy.getClass().getName(), "value",
+                "#this.returnObj=new java.lang.String('mock-cglib-strict')");
+
+        GlobalOptions.strict = false;
+        mockCommand.process(commandProcess);
+
+        GlobalOptions.strict = true;
+        try {
+            Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+            Assertions.assertEquals("mock-cglib-strict", proxy.value());
+        } finally {
+            GlobalOptions.strict = false;
+        }
+    }
+
     private Instrumentation installInstrumentation() throws Throwable {
         Instrumentation instrumentation = ByteBuddyAgent.install();
 

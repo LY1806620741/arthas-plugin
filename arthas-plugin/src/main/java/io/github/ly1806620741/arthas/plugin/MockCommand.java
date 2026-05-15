@@ -83,13 +83,13 @@ public class MockCommand extends AnnotatedCommand {
     private static final String SPRING_CGLIB_MARKER_ALT = "$$SpringCGLIB$$";
     private static final String CGLIB_MARKER = "$$EnhancerByCGLIB$$";
 
-    @Argument(index = 0, argName = "class-pattern")
+    @Argument(index = 0, argName = "class-pattern", required = false)
     @Description("The full qualified class name you want to mock")
     public void setClassPattern(String classPattern) {
         this.classPattern = StringUtils.normalizeClassName(classPattern);
     }
 
-    @Argument(index = 1, argName = "method-pattern")
+    @Argument(index = 1, argName = "method-pattern", required = false)
     @Description("The method name you want to mock")
     public void setMethodPattern(String methodPattern) {
         this.methodPattern = methodPattern;
@@ -614,22 +614,57 @@ public class MockCommand extends AnnotatedCommand {
 
         private static Object getExpressionResult(String express, OgnlContext ognlContext, boolean strict)
                 throws ExpressException {
-            syncStrictInvocation(strict);
-            return ExpressFactory.threadLocalExpress(ognlContext).get(express);
+            StrictState strictState = syncStrictState(strict);
+            try {
+                return ExpressFactory.threadLocalExpress(ognlContext).get(express);
+            } finally {
+                restoreStrictState(strictState);
+            }
         }
 
-        private static void syncStrictInvocation(boolean strict) {
+        private static StrictState syncStrictState(boolean strict) {
+            boolean previousGlobalStrict = GlobalOptions.strict;
+            boolean previousOgnlStrict = previousGlobalStrict;
+            boolean ognlFieldAccessible = false;
             try {
                 Field field = OgnlRuntime.class.getDeclaredField(OGNL_STRICT_FIELD_NAME);
                 field.setAccessible(true);
-                boolean current = field.getBoolean(null);
-                if (current != strict) {
+                previousOgnlStrict = field.getBoolean(null);
+                ognlFieldAccessible = true;
+                if (previousOgnlStrict != strict) {
                     updateStrictField(field, strict);
                 }
             } catch (ReflectiveOperationException e) {
                 logger.debug("Failed to sync OGNL strict invocation for mock command.", e);
             }
+            if (previousGlobalStrict != strict) {
+                GlobalOptions.strict = strict;
+            }
+            return new StrictState(previousGlobalStrict, previousOgnlStrict, ognlFieldAccessible);
         }
+
+        private static void restoreStrictState(StrictState strictState) {
+            if (strictState == null) {
+                return;
+            }
+            if (GlobalOptions.strict != strictState.previousGlobalStrict) {
+                GlobalOptions.strict = strictState.previousGlobalStrict;
+            }
+            if (!strictState.ognlFieldAccessible) {
+                return;
+            }
+            try {
+                Field field = OgnlRuntime.class.getDeclaredField(OGNL_STRICT_FIELD_NAME);
+                field.setAccessible(true);
+                boolean current = field.getBoolean(null);
+                if (current != strictState.previousOgnlStrict) {
+                    updateStrictField(field, strictState.previousOgnlStrict);
+                }
+            } catch (ReflectiveOperationException e) {
+                logger.debug("Failed to restore OGNL strict invocation for mock command.", e);
+            }
+        }
+
 
         private static void updateStrictField(Field field, boolean value) throws ReflectiveOperationException {
             try {
@@ -683,6 +718,18 @@ public class MockCommand extends AnnotatedCommand {
 
             private boolean isStrict() {
                 return strict;
+            }
+        }
+
+        private static final class StrictState {
+            private final boolean previousGlobalStrict;
+            private final boolean previousOgnlStrict;
+            private final boolean ognlFieldAccessible;
+
+            private StrictState(boolean previousGlobalStrict, boolean previousOgnlStrict, boolean ognlFieldAccessible) {
+                this.previousGlobalStrict = previousGlobalStrict;
+                this.previousOgnlStrict = previousOgnlStrict;
+                this.ognlFieldAccessible = ognlFieldAccessible;
             }
         }
 

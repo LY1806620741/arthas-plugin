@@ -38,48 +38,23 @@ class ArthasBootIntegrationIT {
     @Test
     @DisplayName("使用 original 插件增强官方 arthas-core 后验证 strict 模式下 mock 给出手动关闭提示")
     void artifactRegressionShouldPromptManualStrictDisableBeforeMock() throws Exception {
-        Path moduleDir = moduleDir();
-        Path targetDir = moduleDir.resolve("target");
-        Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
-        Path originalPluginJar = findSingleFile(targetDir, "arthas-plugin-*.jar");
-
-        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
-        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 arthas-plugin 制品");
-
-        Path tempDir = Files.createTempDirectory("arthas-artifact-regression-");
+        PreparedArtifact artifact = prepareEnhancedArtifact("arthas-artifact-regression-");
+        Path tempDir = artifact.tempDir;
         Process mathGameProcess = null;
         try {
-            unzip(arthasBinZip, tempDir);
-            ProcessResult mergeResult = runProcess(command(javaExecutable(), "-jar", originalPluginJar.toString()),
-                    tempDir, tempDir.resolve("merge.log"), Duration.ofSeconds(60));
-            Assertions.assertEquals(0, mergeResult.exitCode,
-                    () -> "增强 arthas-core.jar 失败，输出:\n" + mergeResult.output);
-            Assertions.assertTrue(mergeResult.output.contains("执行完成") || mergeResult.output.contains("Class已合并"),
-                    () -> "增强输出不符合预期:\n" + mergeResult.output);
-
-            Path enhancedCoreJar = tempDir.resolve("arthas-core.jar");
-            Assertions.assertTrue(jarContains(enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/MockCommand.class"),
+            Assertions.assertTrue(jarContains(artifact.enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/MockCommand.class"),
                     "增强后的 arthas-core.jar 应包含 MockCommand");
 
             Path mathGameLog = tempDir.resolve("math-game.log");
-            ProcessBuilder mathGameBuilder = new ProcessBuilder(javaExecutable(), "-jar", "math-game.jar");
-            mathGameBuilder.directory(tempDir.toFile());
-            mathGameBuilder.redirectErrorStream(true);
-            mathGameBuilder.redirectOutput(mathGameLog.toFile());
-            mathGameProcess = mathGameBuilder.start();
+            mathGameProcess = launchMathGame(tempDir, mathGameLog);
+            String targetPid = processId(mathGameProcess);
 
             waitForLogGrowth(mathGameLog, 1, Duration.ofSeconds(20));
 
             int telnetPort = findFreePort();
             String mockCommand = "help mock;mock demo.MathGame primeFactors -b '#this.returnObj=@java.util.Arrays@asList(99991,99989)'";
-            ProcessResult attachResult = runProcess(
-                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
-                            "--select", "math-game",
-                            "--target-ip", "127.0.0.1",
-                            "--telnet-port", Integer.toString(telnetPort),
-                            "--http-port", "-1",
-                            "-c", mockCommand),
-                    tempDir, tempDir.resolve("attach.log"), Duration.ofSeconds(90));
+            ProcessResult attachResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, mockCommand, tempDir.resolve("attach.log"), Duration.ofSeconds(90));
 
             Assertions.assertEquals(0, attachResult.exitCode,
                     () -> "arthas-boot 附着/执行 mock 失败，输出:\n" + attachResult.output);
@@ -92,23 +67,55 @@ class ArthasBootIntegrationIT {
             Assertions.assertTrue(mathGameOutput.contains(STRICT_PROMPT_FRAGMENT),
                     () -> "math-game 输出中未观察到 strict 手动关闭提示:\n" + mathGameOutput);
 
-            ProcessResult stopResult = runProcess(
-                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
-                            "--select", "math-game",
-                            "--target-ip", "127.0.0.1",
-                            "--telnet-port", Integer.toString(telnetPort),
-                            "--http-port", "-1",
-                            "-c", "stop"),
-                    tempDir, tempDir.resolve("stop.log"), Duration.ofSeconds(60));
+            ProcessResult stopResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "stop", tempDir.resolve("stop.log"), Duration.ofSeconds(60));
             Assertions.assertEquals(0, stopResult.exitCode,
                     () -> "stop 命令执行失败，输出:\n" + stopResult.output);
         } finally {
-            if (mathGameProcess != null) {
-                mathGameProcess.destroy();
-                if (!mathGameProcess.waitFor(10, TimeUnit.SECONDS)) {
-                    mathGameProcess.destroyForcibly();
-                }
-            }
+            destroyProcess(mathGameProcess);
+            deleteRecursively(tempDir);
+        }
+    }
+
+    @Test
+    @DisplayName("使用 original 插件增强官方 arthas-core 后验证 mock --list 可查看已安装规则")
+    void artifactRegressionShouldListInstalledMocks() throws Exception {
+        PreparedArtifact artifact = prepareEnhancedArtifact("arthas-mock-list-regression-");
+        Path tempDir = artifact.tempDir;
+        Process mathGameProcess = null;
+        try {
+            Path mathGameLog = tempDir.resolve("math-game-list.log");
+            mathGameProcess = launchMathGame(tempDir, mathGameLog);
+            String targetPid = processId(mathGameProcess);
+
+            waitForLogGrowth(mathGameLog, 1, Duration.ofSeconds(20));
+
+            int telnetPort = findFreePort();
+            ProcessResult strictResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "options strict false", tempDir.resolve("mock-list-options.log"), Duration.ofSeconds(90));
+            Assertions.assertEquals(0, strictResult.exitCode,
+                    () -> "关闭 strict 模式失败，输出:\n" + strictResult.output);
+
+            String mockCommand = "mock demo.MathGame primeFactors -b '#this.returnObj=@java.util.Arrays@asList(99991,99989)';"
+                    + "mock --list";
+            ProcessResult attachResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, mockCommand, tempDir.resolve("mock-list-attach.log"), Duration.ofSeconds(90));
+
+            Assertions.assertEquals(0, attachResult.exitCode,
+                    () -> "arthas-boot 附着/执行 mock --list 失败，输出:\n" + attachResult.output);
+            Assertions.assertFalse(attachResult.output.contains("command not found"),
+                    () -> "mock 命令未生效，输出:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("Active mocks:")
+                            && attachResult.output.contains("demo.MathGame#primeFactors")
+                            && attachResult.output.contains("strict=false"),
+                    () -> "附着输出中未发现 mock 列表内容:\n" + attachResult.output);
+
+            ProcessResult stopResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "stop", tempDir.resolve("mock-list-stop.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, stopResult.exitCode,
+                    () -> "stop 命令执行失败，输出:\n" + stopResult.output);
+        } finally {
+            destroyProcess(mathGameProcess);
             deleteRecursively(tempDir);
         }
     }
@@ -116,27 +123,13 @@ class ArthasBootIntegrationIT {
     @Test
     @DisplayName("使用 original 插件增强官方 arthas-core 后验证 springboot --proxy-http 可注入转发路由")
     void artifactRegressionShouldInjectSpringBootProxyRoute() throws Exception {
-        Path moduleDir = moduleDir();
-        Path targetDir = moduleDir.resolve("target");
-        Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
-        Path originalPluginJar = findSingleFile(targetDir, "arthas-plugin-*.jar");
-
-        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
-        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 arthas-plugin 制品");
-
-        Path tempDir = Files.createTempDirectory("arthas-springboot-proxy-regression-");
+        PreparedArtifact artifact = prepareEnhancedArtifact("arthas-springboot-proxy-regression-");
+        Path tempDir = artifact.tempDir;
         Process springBootProcess = null;
         HttpServer backendServer = null;
         try {
-            unzip(arthasBinZip, tempDir);
-            ProcessResult mergeResult = runProcess(command(javaExecutable(), "-jar", originalPluginJar.toString()),
-                    tempDir, tempDir.resolve("merge.log"), Duration.ofSeconds(60));
-            Assertions.assertEquals(0, mergeResult.exitCode,
-                    () -> "增强 arthas-core.jar 失败，输出:\n" + mergeResult.output);
-
-            Path enhancedCoreJar = tempDir.resolve("arthas-core.jar");
             Assertions.assertTrue(
-                    jarContains(enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/SpringBootCommand.class"),
+                    jarContains(artifact.enhancedCoreJar, "io/github/ly1806620741/arthas/plugin/SpringBootCommand.class"),
                     "增强后的 arthas-core.jar 应包含 SpringBootCommand");
 
             int backendPort = findFreePort();
@@ -144,13 +137,7 @@ class ArthasBootIntegrationIT {
 
             int appPort = findFreePort();
             Path springBootLog = tempDir.resolve("spring-boot-app.log");
-            ProcessBuilder springBootBuilder = new ProcessBuilder(
-                    command(javaExecutable(), "-cp", testRuntimeClasspath(),
-                            ArthasSpringBootProxyTargetApp.class.getName(), "--server.port=" + appPort));
-            springBootBuilder.directory(moduleDir.toFile());
-            springBootBuilder.redirectErrorStream(true);
-            springBootBuilder.redirectOutput(springBootLog.toFile());
-            springBootProcess = springBootBuilder.start();
+            springBootProcess = launchSpringBootProxyTargetApp(artifact.moduleDir, springBootLog, appPort);
             String targetPid = processId(springBootProcess);
 
             waitForHttpText(new URL("http://127.0.0.1:" + appPort + "/sample"), "sample", Duration.ofSeconds(40));
@@ -160,14 +147,8 @@ class ArthasBootIntegrationIT {
             String routePattern = "/arthas/plain/**";
             String springbootCommand = "help springboot;springboot --proxy-http --route " + routePattern
                     + " --target-host 127.0.0.1 --target-port " + backendPort;
-            ProcessResult attachResult = runProcess(
-                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
-                            "--target-ip", "127.0.0.1",
-                            "--telnet-port", Integer.toString(telnetPort),
-                            "--http-port", "-1",
-                            "-c", springbootCommand,
-                            targetPid),
-                    tempDir, tempDir.resolve("springboot-attach.log"), Duration.ofSeconds(90));
+            ProcessResult attachResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, springbootCommand, tempDir.resolve("springboot-attach.log"), Duration.ofSeconds(90));
 
             Assertions.assertEquals(0, attachResult.exitCode,
                     () -> "arthas-boot 附着/执行 springboot 命令失败，输出:\n" + attachResult.output);
@@ -183,38 +164,159 @@ class ArthasBootIntegrationIT {
             Assertions.assertTrue(proxiedOutput.contains("GET /api/test?foo=bar"),
                     () -> "未通过 springboot 代理观察到后端响应:\n" + proxiedOutput);
 
-            ProcessResult stopResult = runProcess(
-                    command(javaExecutable(), "-jar", tempDir.resolve("arthas-boot.jar").toString(),
-                            "--target-ip", "127.0.0.1",
-                            "--telnet-port", Integer.toString(telnetPort),
-                            "--http-port", "-1",
-                            "-c", "stop",
-                            targetPid),
-                    tempDir, tempDir.resolve("springboot-stop.log"), Duration.ofSeconds(60));
+            ProcessResult stopResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "stop", tempDir.resolve("springboot-stop.log"), Duration.ofSeconds(60));
             Assertions.assertEquals(0, stopResult.exitCode,
                     () -> "stop 命令执行失败，输出:\n" + stopResult.output);
         } finally {
             if (backendServer != null) {
                 backendServer.stop(0);
             }
-            if (springBootProcess != null) {
-                springBootProcess.destroy();
-                if (!springBootProcess.waitFor(10, TimeUnit.SECONDS)) {
-                    springBootProcess.destroyForcibly();
-                }
-            }
+            destroyProcess(springBootProcess);
             deleteRecursively(tempDir);
         }
     }
 
-    private static Path moduleDir() {
+    @Test
+    @DisplayName("使用 original 插件增强官方 arthas-core 后验证可 mock Spring CGLIB 代理并通过 --list 查看")
+    void artifactRegressionShouldMockSpringCglibAndListIt() throws Exception {
+        PreparedArtifact artifact = prepareEnhancedArtifact("arthas-spring-cglib-regression-");
+        Path tempDir = artifact.tempDir;
+        Process springBootProcess = null;
         try {
-            Path testClassesDir = Paths.get(ArthasBootIntegrationIT.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI());
-            return testClassesDir.getParent().getParent();
-        } catch (Exception e) {
-            throw new IllegalStateException("无法定位模块目录", e);
+            int appPort = findFreePort();
+            Path springBootLog = tempDir.resolve("spring-cglib-app.log");
+            springBootProcess = launchSpringBootProxyTargetApp(artifact.moduleDir, springBootLog, appPort);
+            String targetPid = processId(springBootProcess);
+
+            waitForHttpText(new URL("http://127.0.0.1:" + appPort + "/sample"), "sample", Duration.ofSeconds(40));
+            String proxyClassName = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/cglib/class-name"),
+                    "CGLIB", Duration.ofSeconds(20));
+            Assertions.assertTrue(proxyClassName.contains("CGLIB"),
+                    () -> "未获得 CGLIB 代理类名:\n" + proxyClassName);
+            String originalValue = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/cglib/value"),
+                    "origin", Duration.ofSeconds(20));
+            Assertions.assertTrue(originalValue.contains("origin"),
+                    () -> "mock 前返回值不符合预期:\n" + originalValue);
+            ensureProcessAlive(springBootProcess, springBootLog);
+
+            int telnetPort = findFreePort();
+            ProcessResult strictResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "options strict false", tempDir.resolve("spring-cglib-options.log"), Duration.ofSeconds(90));
+            Assertions.assertEquals(0, strictResult.exitCode,
+                    () -> "关闭 strict 模式失败，输出:\n" + strictResult.output);
+
+            String mockCommand = "mock " + proxyClassName + " value -a '#this.returnObj=new java.lang.String(\"mock-cglib\")';"
+                    + "mock --list";
+            ProcessResult attachResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, mockCommand, tempDir.resolve("spring-cglib-attach.log"), Duration.ofSeconds(90));
+
+            Assertions.assertEquals(0, attachResult.exitCode,
+                    () -> "arthas-boot 附着/执行 Spring CGLIB mock 失败，输出:\n" + attachResult.output);
+            Assertions.assertFalse(attachResult.output.contains("command not found"),
+                    () -> "mock 命令未生效，输出:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("Active mocks:")
+                            && attachResult.output.contains(ArthasSpringBootProxyTargetApp.CglibProxyTarget.class.getName() + "#value")
+                            && attachResult.output.contains("strict=false"),
+                    () -> "附着输出中未发现 Spring CGLIB mock 列表内容:\n" + attachResult.output);
+
+            String mockedValue = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/cglib/debug-value"),
+                    "mock-cglib", Duration.ofSeconds(20));
+            Assertions.assertTrue(mockedValue.contains("mock-cglib"),
+                    () -> "Spring CGLIB mock 后返回值不符合预期:\n" + mockedValue);
+
+            ProcessResult stopResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "stop", tempDir.resolve("spring-cglib-stop.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, stopResult.exitCode,
+                    () -> "stop 命令执行失败，输出:\n" + stopResult.output);
+        } finally {
+            destroyProcess(springBootProcess);
+            deleteRecursively(tempDir);
         }
+    }
+
+    private static PreparedArtifact prepareEnhancedArtifact(String tempDirPrefix) throws Exception {
+        Path moduleDir = moduleDir();
+        Path targetDir = moduleDir.resolve("target");
+        Path arthasBinZip = resolveArthasBinZip(moduleDir, targetDir);
+        Path originalPluginJar = resolveOriginalPluginJar(moduleDir, targetDir);
+
+        Assertions.assertTrue(Files.isRegularFile(arthasBinZip), () -> "未找到可用的 arthas-bin.zip: " + arthasBinZip);
+        Assertions.assertTrue(Files.isRegularFile(originalPluginJar), "应存在 arthas-plugin 制品");
+
+        Path tempDir = Files.createTempDirectory(tempDirPrefix);
+        try {
+            unzip(arthasBinZip, tempDir);
+            ProcessResult mergeResult = runProcess(command(javaExecutable(), "-jar", originalPluginJar.toString()),
+                    tempDir, tempDir.resolve("merge.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, mergeResult.exitCode,
+                    () -> "增强 arthas-core.jar 失败，输出:\n" + mergeResult.output);
+            Assertions.assertTrue(mergeResult.output.contains("执行完成") || mergeResult.output.contains("Class已合并"),
+                    () -> "增强输出不符合预期:\n" + mergeResult.output);
+            return new PreparedArtifact(moduleDir, tempDir, tempDir.resolve("arthas-core.jar"));
+        } catch (Throwable throwable) {
+            deleteRecursively(tempDir);
+            throw throwable;
+        }
+    }
+
+    private static Path moduleDir() {
+        List<Path> candidates = new ArrayList<Path>();
+        candidates.add(Paths.get(System.getProperty("user.dir")));
+        try {
+            candidates.add(Paths.get(ArthasBootIntegrationIT.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI()));
+        } catch (Exception ignore) {
+            // ignore and continue with user.dir fallback
+        }
+        for (Path candidate : candidates) {
+            Path resolved = findModuleDir(candidate);
+            if (resolved != null) {
+                return resolved;
+            }
+        }
+        throw new IllegalStateException("无法定位模块目录，候选路径: " + candidates);
+    }
+
+    private static Path findModuleDir(Path start) {
+        if (start == null) {
+            return null;
+        }
+        Path current = Files.isDirectory(start)
+                ? start.toAbsolutePath().normalize()
+                : start.toAbsolutePath().normalize().getParent();
+        while (current != null) {
+            if (Files.isRegularFile(current.resolve("pom.xml"))
+                    && (Files.isDirectory(current.resolve("src/main/java"))
+                            || Files.isDirectory(current.resolve("src/test/java")))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return null;
+    }
+
+    private static Path resolveOriginalPluginJar(Path moduleDir, Path targetDir) throws Exception {
+        try {
+            return findSingleFile(targetDir, "arthas-plugin-*.jar");
+        } catch (IOException ignored) {
+            buildPluginJar(moduleDir);
+            return findSingleFile(targetDir, "arthas-plugin-*.jar");
+        }
+    }
+
+    private static void buildPluginJar(Path moduleDir) throws Exception {
+        Path reactorDir = moduleDir.getParent() == null ? moduleDir : moduleDir.getParent();
+        ProcessResult packageResult = runProcess(
+                command("mvn", "-q", "-pl", moduleDir.getFileName().toString(), "-am", "-DskipTests", "package"),
+                reactorDir,
+                moduleDir.resolve("target").resolve("package-plugin.log"),
+                Duration.ofMinutes(5));
+        Assertions.assertEquals(0, packageResult.exitCode,
+                () -> "自动打包 arthas-plugin 制品失败，输出:\n" + packageResult.output);
     }
 
     private static Path findSingleFile(Path directory, String glob) throws IOException {
@@ -289,16 +391,36 @@ class ArthasBootIntegrationIT {
 
     private static List<String> command(String... args) {
         List<String> command = new ArrayList<String>();
-        for (String arg : args) {
-            command.add(arg);
-        }
+        java.util.Collections.addAll(command, args);
         return command;
+    }
+
+    private static ProcessResult runArthasBootCommand(Path arthasHome,
+            int telnetPort,
+            String targetPid,
+            String arthasCommand,
+            Path outputFile,
+            Duration timeout) throws Exception {
+        return runProcess(
+                command(javaExecutable(), "-jar", arthasHome.resolve("arthas-boot.jar").toString(),
+                        "--target-ip", "127.0.0.1",
+                        "--telnet-port", Integer.toString(telnetPort),
+                        "--http-port", "-1",
+                        "-c", arthasCommand,
+                        targetPid),
+                arthasHome,
+                outputFile,
+                timeout);
     }
 
     private static ProcessResult runProcess(List<String> command,
             Path workingDirectory,
             Path outputFile,
             Duration timeout) throws Exception {
+        Path parent = outputFile.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(workingDirectory.toFile());
         builder.redirectErrorStream(true);
@@ -349,6 +471,34 @@ class ArthasBootIntegrationIT {
             throw new IllegalStateException("目标 Spring Boot 进程已提前退出，exitCode=" + exitCode + "，日志:\n" + log);
         } catch (IllegalThreadStateException ignore) {
             // still alive
+        }
+    }
+
+    private static Process launchMathGame(Path workingDirectory, Path logFile) throws IOException {
+        ProcessBuilder mathGameBuilder = new ProcessBuilder(javaExecutable(), "-jar", "math-game.jar");
+        mathGameBuilder.directory(workingDirectory.toFile());
+        mathGameBuilder.redirectErrorStream(true);
+        mathGameBuilder.redirectOutput(logFile.toFile());
+        return mathGameBuilder.start();
+    }
+
+    private static Process launchSpringBootProxyTargetApp(Path moduleDir, Path logFile, int appPort) throws IOException {
+        ProcessBuilder springBootBuilder = new ProcessBuilder(
+                command(javaExecutable(), "-cp", testRuntimeClasspath(),
+                        ArthasSpringBootProxyTargetApp.class.getName(), "--server.port=" + appPort));
+        springBootBuilder.directory(moduleDir.toFile());
+        springBootBuilder.redirectErrorStream(true);
+        springBootBuilder.redirectOutput(logFile.toFile());
+        return springBootBuilder.start();
+    }
+
+    private static void destroyProcess(Process process) throws InterruptedException {
+        if (process == null) {
+            return;
+        }
+        process.destroy();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
         }
     }
 
@@ -481,6 +631,18 @@ class ArthasBootIntegrationIT {
         private ProcessResult(int exitCode, String output) {
             this.exitCode = exitCode;
             this.output = output;
+        }
+    }
+
+    private static final class PreparedArtifact {
+        private final Path moduleDir;
+        private final Path tempDir;
+        private final Path enhancedCoreJar;
+
+        private PreparedArtifact(Path moduleDir, Path tempDir, Path enhancedCoreJar) {
+            this.moduleDir = moduleDir;
+            this.tempDir = tempDir;
+            this.enhancedCoreJar = enhancedCoreJar;
         }
     }
 
