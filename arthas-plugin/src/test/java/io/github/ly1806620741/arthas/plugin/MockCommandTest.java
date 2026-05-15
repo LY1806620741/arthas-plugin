@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.cglib.proxy.Enhancer;
+import org.springframework.cglib.proxy.MethodInterceptor;
 
 import com.taobao.arthas.core.server.ArthasBootstrap;
 import com.taobao.arthas.core.shell.command.CommandProcess;
@@ -193,6 +195,69 @@ public class MockCommandTest {
         Assertions.assertEquals("mock-second", target.second());
     }
 
+    @Test
+    @DisplayName("测试 --list 能查看当前 mock 列表")
+    void testListMocks() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+
+        buildAfterMockCommand(ListTarget.class.getName(), "name",
+                "#this.returnObj=new java.lang.String('listed')")
+                .process(mockCommandProcess(instrumentation));
+
+        MockCommand listCommand = new MockCommand();
+        listCommand.setList(true);
+        CommandProcess listProcess = mockCommandProcess(instrumentation);
+
+        listCommand.process(listProcess);
+
+        Mockito.verify(listProcess).end(Mockito.eq(0), Mockito.contains(ListTarget.class.getName() + "#name"));
+        Assertions.assertEquals("listed", new ListTarget().name());
+    }
+
+    @Test
+    @DisplayName("测试 spring cglib 代理类名可以正常 mock")
+    void testSpringCglibProxyClassCanBeMocked() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        CglibProxyTarget proxy = createCglibProxy();
+        Assertions.assertTrue(proxy.getClass().getName().contains("CGLIB"), proxy.getClass().getName());
+
+        MockCommand mockCommand = buildAfterMockCommand(proxy.getClass().getName(), "value",
+                "#this.returnObj=new java.lang.String('mock-cglib')");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        Assertions.assertEquals("mock-cglib", proxy.value());
+    }
+
+    private Instrumentation installInstrumentation() throws Throwable {
+        Instrumentation instrumentation = ByteBuddyAgent.install();
+
+        CodeSource codeSource = ArthasBootstrap.class.getProtectionDomain().getCodeSource();
+        if (codeSource != null) {
+            File arthasCoreJarFile = new File(codeSource.getLocation().toURI().getSchemeSpecificPart());
+            File spyJar = new File(arthasCoreJarFile.getAbsolutePath().replaceAll("arthas-core", "arthas-spy"));
+            Assertions.assertTrue(spyJar.exists());
+            instrumentation.appendToBootstrapClassLoaderSearch(new JarFile(spyJar));
+        }
+
+        ArthasBootstrap.getInstance(instrumentation, "ip=127.0.0.1");
+        GlobalOptions.strict = false;
+        return instrumentation;
+    }
+
+    private CommandProcess mockCommandProcess(Instrumentation instrumentation) {
+        CommandProcess commandProcess = Mockito.mock(CommandProcess.class);
+        Session session = Mockito.mock(Session.class);
+        Mockito.doReturn(session).when(commandProcess).session();
+        Mockito.doReturn(true).when(session).tryLock();
+        Mockito.doReturn(0).when(session).getLock();
+        Mockito.doReturn(instrumentation).when(session).getInstrumentation();
+        return commandProcess;
+    }
+
     private MockCommand buildMockCommand(String classPattern, String methodPattern, String beforeOgnl) {
         MockCommand mockCommand = new MockCommand();
         mockCommand.setClassPattern(classPattern);
@@ -217,5 +282,24 @@ public class MockCommandTest {
         String second() {
             return "second";
         }
+    }
+
+    static class ListTarget {
+        String name() {
+            return "name";
+        }
+    }
+
+    public static class CglibProxyTarget {
+        public String value() {
+            return "origin";
+        }
+    }
+
+    private static CglibProxyTarget createCglibProxy() {
+        Enhancer enhancer = new Enhancer();
+        enhancer.setSuperclass(CglibProxyTarget.class);
+        enhancer.setCallback((MethodInterceptor) (obj, method, args, proxy) -> proxy.invokeSuper(obj, args));
+        return (CglibProxyTarget) enhancer.create();
     }
 }

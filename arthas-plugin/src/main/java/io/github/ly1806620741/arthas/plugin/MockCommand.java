@@ -6,6 +6,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.security.CodeSource;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,8 @@ import com.taobao.arthas.core.command.express.ExpressFactory;
 import com.taobao.arthas.core.command.klass100.RetransformCommand;
 import com.taobao.arthas.core.command.klass100.RetransformCommand.RetransformEntry;
 import com.taobao.arthas.core.command.model.EnhancerModelFactory;
+import com.taobao.arthas.core.shell.cli.Completion;
+import com.taobao.arthas.core.shell.cli.CompletionUtils;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.session.Session;
@@ -52,7 +56,8 @@ import ognl.OgnlRuntime;
         "  3. 抛出指定异常: mock com.demo.PayService pay -e 'new RuntimeException(\"支付失败\")'\n" +
         "  4. 修改方法入参: mock com.demo.UserService updateUser -b '[0, {\"id\":1,\"name\":\"modify\"}]'\n" +
         "  5. 清除指定mock: mock com.demo.UserService getUserById --clear\n" +
-        "  6. 清除全部mock: mock --clear-all\n")
+        "  6. 查看当前mock列表: mock --list\n" +
+        "  7. 清除全部mock: mock --clear-all\n")
 public class MockCommand extends AnnotatedCommand {
 
     private static final Logger logger = LoggerFactory.getLogger(MockCommand.class);
@@ -64,6 +69,7 @@ public class MockCommand extends AnnotatedCommand {
     private boolean isException = false;
     private boolean clear = false;
     private boolean clearAll = false;
+    private boolean list = false;
     private Integer sizeLimit = 10 * 1024 * 1024;
     private boolean isRegEx = false;
     private int numberOfLimit = 100;
@@ -73,6 +79,9 @@ public class MockCommand extends AnnotatedCommand {
     private String classLoaderClass;
     private static final List<Class<?>> mockClass = new ArrayList<>();
     private static final AtomicBoolean APPENDED_TO_SYSTEM_CLASSLOADER = new AtomicBoolean(false);
+    private static final String SPRING_CGLIB_MARKER = "$$EnhancerBySpringCGLIB$$";
+    private static final String SPRING_CGLIB_MARKER_ALT = "$$SpringCGLIB$$";
+    private static final String CGLIB_MARKER = "$$EnhancerByCGLIB$$";
 
     @Argument(index = 0, argName = "class-pattern")
     @Description("The full qualified class name you want to mock")
@@ -120,6 +129,12 @@ public class MockCommand extends AnnotatedCommand {
     @Description("Clear all mocks")
     public void setClearAll(boolean clearAll) {
         this.clearAll = clearAll;
+    }
+
+    @Option(longName = "list", flag = true)
+    @Description("List active mocks")
+    public void setList(boolean list) {
+        this.list = list;
     }
 
     @Option(shortName = "M", longName = "sizeLimit")
@@ -183,8 +198,30 @@ public class MockCommand extends AnnotatedCommand {
     }
 
     @Override
+    public void complete(Completion completion) {
+        int argumentIndex = CompletionUtils.detectArgumentIndex(completion);
+        if (argumentIndex == 1) {
+            if (!CompletionUtils.completeClassName(completion)) {
+                super.complete(completion);
+            }
+            return;
+        }
+        if (argumentIndex == 2) {
+            if (!CompletionUtils.completeMethodName(completion)) {
+                super.complete(completion);
+            }
+            return;
+        }
+        super.complete(completion);
+    }
+
+    @Override
     public void process(CommandProcess process) {
         Session session = process.session();
+        if (session == null) {
+            process.end(-1, "session unavailable.");
+            return;
+        }
 
         if (!session.tryLock()) {
             String msg = "someone else is enhancing classes, pls. wait.";
@@ -194,9 +231,17 @@ public class MockCommand extends AnnotatedCommand {
         }
         int lock = session.getLock();
         try {
+            Instrumentation inst = session.getInstrumentation();
+            Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
+
+            if (list) {
+                process.end(0, formatMockList(describeRuntimeMocks(runtimeAdviceClass)));
+                return;
+            }
+
             // 处理清除逻辑
             if (clearAll) {
-                clearAllMocks(process.session().getInstrumentation());
+                clearAllMocks(inst);
                 process.appendResult(EnhancerModelFactory.create(new EnhancerAffect(), true, "All mocks cleared."));
                 process.end(0, "OK");
                 return;
@@ -207,7 +252,7 @@ public class MockCommand extends AnnotatedCommand {
                     process.end(-1, "--clear requires class-pattern and method-pattern");
                     return;
                 }
-                clearMock(process.session().getInstrumentation());
+                clearMock(inst);
                 process.appendResult(EnhancerModelFactory.create(new EnhancerAffect(), true, "Mock cleared."));
                 process.end(0, "OK");
                 return;
@@ -219,8 +264,6 @@ public class MockCommand extends AnnotatedCommand {
                 return;
             }
 
-            Instrumentation inst = session.getInstrumentation();
-            Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
             Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(classPattern, isRegEx);
             Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(methodPattern, isRegEx);
 
@@ -235,31 +278,39 @@ public class MockCommand extends AnnotatedCommand {
 
             EnhancerAffect affect = new EnhancerAffect();
             List<RetransformEntry> entries = new ArrayList<>();
+            Map<Class<?>, Set<String>> methodsByTargetClass = new LinkedHashMap<Class<?>, Set<String>>();
 
             for (Class<?> clazz : matchingClasses) {
-                Set<String> matchedMethods = findMatchedMethods(clazz, methodNameMatcher);
+                Class<?> targetClass = resolveEnhanceableClass(clazz);
+                Set<String> matchedMethods = findMatchedMethods(targetClass, methodNameMatcher);
                 if (matchedMethods.isEmpty()) {
                     continue;
                 }
-                putRuntimeMocks(runtimeAdviceClass, clazz, matchedMethods, this);
-                Set<String> allMockedMethods = getRuntimeMockedMethods(runtimeAdviceClass, clazz);
-                byte[] enhancedBytes = AsmMockEnhancer.enhance(clazz, allMockedMethods);
-
-                if (verbose) {
-                    logger.info("Enhanced class {} methods {}:\n{}", clazz.getName(),
-                            allMockedMethods, Decompiler.decompile(enhancedBytes));
-                }
-                if (!mockClass.contains(clazz)) {
-                    mockClass.add(clazz);
-                }
-                entries.add(new RetransformEntry(clazz.getName(),
-                        enhancedBytes,
-                        hashCode, classLoaderClass));
+                methodsByTargetClass.computeIfAbsent(targetClass, key -> new LinkedHashSet<String>()).addAll(matchedMethods);
             }
 
-            if (entries.isEmpty()) {
+            if (methodsByTargetClass.isEmpty()) {
                 process.end(-1, "No method matched: " + methodPattern);
                 return;
+            }
+
+            for (Map.Entry<Class<?>, Set<String>> entry : methodsByTargetClass.entrySet()) {
+                Class<?> targetClass = entry.getKey();
+                Set<String> matchedMethods = entry.getValue();
+                putRuntimeMocks(runtimeAdviceClass, targetClass, matchedMethods, this);
+                Set<String> allMockedMethods = getRuntimeMockedMethods(runtimeAdviceClass, targetClass);
+                byte[] enhancedBytes = AsmMockEnhancer.enhance(targetClass, allMockedMethods);
+
+                if (verbose) {
+                    logger.info("Enhanced class {} methods {}:\n{}", targetClass.getName(),
+                            allMockedMethods, Decompiler.decompile(enhancedBytes));
+                }
+                if (!mockClass.contains(targetClass)) {
+                    mockClass.add(targetClass);
+                }
+                entries.add(new RetransformEntry(targetClass.getName(),
+                        enhancedBytes,
+                        hashCode, classLoaderClass));
             }
 
             // 注册到 Arthas 全局 retransform 管理器
@@ -268,7 +319,7 @@ public class MockCommand extends AnnotatedCommand {
             method.setAccessible(true);
             method.invoke(null);
             RetransformCommand.addRetransformEntry(entries);
-            inst.retransformClasses(matchingClasses.toArray(new Class[0]));
+            inst.retransformClasses(methodsByTargetClass.keySet().toArray(new Class[0]));
 
             process.appendResult(EnhancerModelFactory.create(affect, true, "Mock installed."));
             process.end(0, "OK");
@@ -277,8 +328,46 @@ public class MockCommand extends AnnotatedCommand {
             process.end(-1, "mock failed, beforeOgnl is: " + this.getBeforeOgnl() + ", afterOgnl is: "
                     + this.getAfterOgnl() + ", " + e.getMessage() + ", visit " + LogUtil.loggingFile()
                     + " for more details.");
+        } finally {
+            if (session.getLock() == lock) {
+                session.unLock();
+            }
         }
 
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> describeRuntimeMocks(Class<?> runtimeAdviceClass) throws ReflectiveOperationException {
+        if (runtimeAdviceClass == OgnlMockAdvice.class) {
+            return OgnlMockAdvice.describeMocks();
+        }
+        Method method = runtimeAdviceClass.getMethod("describeMocks");
+        return (List<String>) method.invoke(null);
+    }
+
+    private static String formatMockList(List<String> mockLines) {
+        if (mockLines == null || mockLines.isEmpty()) {
+            return "No active mocks.";
+        }
+        StringBuilder builder = new StringBuilder("Active mocks:");
+        for (String mockLine : mockLines) {
+            builder.append('\n').append(mockLine);
+        }
+        return builder.toString();
+    }
+
+    private static Class<?> resolveEnhanceableClass(Class<?> clazz) {
+        if (clazz == null) {
+            return null;
+        }
+        String className = clazz.getName();
+        if (!className.contains(SPRING_CGLIB_MARKER)
+                && !className.contains(SPRING_CGLIB_MARKER_ALT)
+                && !className.contains(CGLIB_MARKER)) {
+            return clazz;
+        }
+        Class<?> superClass = clazz.getSuperclass();
+        return superClass != null && superClass != Object.class ? superClass : clazz;
     }
 
     private static Class<?> ensureAdviceClassesVisible(Instrumentation instrumentation) {
@@ -430,6 +519,22 @@ public class MockCommand extends AnnotatedCommand {
                 return new String[0];
             }
             return methodMocks.keySet().toArray(new String[0]);
+        }
+
+        public static List<String> describeMocks() {
+            List<String> lines = new ArrayList<String>();
+            for (Map.Entry<Class<?>, Map<String, MockConfig>> classEntry : mockCommands.entrySet()) {
+                String className = classEntry.getKey().getName();
+                for (Map.Entry<String, MockConfig> methodEntry : classEntry.getValue().entrySet()) {
+                    MockConfig config = methodEntry.getValue();
+                    lines.add(className + "#" + methodEntry.getKey()
+                            + " [before=" + String.valueOf(config.getBeforeOgnl())
+                            + ", after=" + String.valueOf(config.getAfterOgnl())
+                            + ", strict=" + config.isStrict() + "]");
+                }
+            }
+            Collections.sort(lines);
+            return lines;
         }
 
         public static boolean isSkipped(OgnlContext ognlContext) {
