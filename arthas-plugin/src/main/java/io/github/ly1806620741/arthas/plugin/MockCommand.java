@@ -2,8 +2,10 @@ package io.github.ly1806620741.arthas.plugin;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,7 +59,13 @@ import ognl.OgnlRuntime;
         "  4. 修改方法入参: mock com.demo.UserService updateUser -b '[0, {\"id\":1,\"name\":\"modify\"}]'\n" +
         "  5. 清除指定mock: mock com.demo.UserService getUserById --clear\n" +
         "  6. 查看当前mock列表: mock --list\n" +
-        "  7. 清除全部mock: mock --clear-all\n")
+        "  7. 清除全部mock: mock --clear-all\n" +
+        "  8. JSON转返回对象: mock com.demo.UserService getUser -a 'json:{\"id\":1,\"profile\":{\"name\":\"arthas\"}}'\n" +
+        "  9. JSON替换单个对象入参: mock com.demo.UserService save -b 'json:{\"id\":1,\"profile\":{\"name\":\"mock\"}}'\n" +
+        " 10. JSON替换多个入参: mock com.demo.OrderService create -b 'json:[\"mock\", {\"id\":1}]'\n" +
+        " 11. JSON作为独立参数供OGNL修改后赋值: mock com.demo.UserService getUser -j '{\"id\":1,\"profile\":{\"name\":\"arthas\"}}' -a '#json.profile.name=\"changed\",#this.returnObj=#json'\n" +
+        " 12. 直接OGNL修改JSON后赋给参数: mock com.demo.UserService save -j '{\"profile\":{\"name\":\"arthas\"}}' -b '#json.profile.name=\"patched\",#this.params[0]=#json,#this.skip=false'\n" +
+        " 13. JSON支持@type指定具体对象类型: mock com.demo.AnimalService load -a 'json:{\"@type\":\"com.demo.Dog\",\"name\":\"arthas\"}'\n")
 public class MockCommand extends AnnotatedCommand {
 
     private static final Logger logger = LoggerFactory.getLogger(MockCommand.class);
@@ -66,6 +74,7 @@ public class MockCommand extends AnnotatedCommand {
     private String methodPattern;
     private String beforeOgnl;
     private String afterOgnl;
+    private String jsonPayload;
     private boolean isException = false;
     private boolean clear = false;
     private boolean clearAll = false;
@@ -111,6 +120,12 @@ public class MockCommand extends AnnotatedCommand {
     @Description("Mock after method invocation (修改入参/立即返回)")
     public void setAfterOgnl(String afterOgnl) {
         this.afterOgnl = afterOgnl;
+    }
+
+    @Option(shortName = "j", longName = "json")
+    @Description("JSON payload bound to #this.json before OGNL execution")
+    public void setJsonPayload(String jsonPayload) {
+        this.jsonPayload = jsonPayload;
     }
 
     @Option(shortName = "e", longName = "exception", flag = true)
@@ -175,6 +190,10 @@ public class MockCommand extends AnnotatedCommand {
 
     public String getAfterOgnl() {
         return afterOgnl;
+    }
+
+    public String getJsonPayload() {
+        return jsonPayload;
     }
 
     public boolean isException() {
@@ -399,13 +418,13 @@ public class MockCommand extends AnnotatedCommand {
         for (String methodName : matchedMethods) {
             if (runtimeAdviceClass == OgnlMockAdvice.class) {
                 OgnlMockAdvice.putMockConfig(targetClass, methodName, mockCommand.getBeforeOgnl(),
-                        mockCommand.getAfterOgnl(), GlobalOptions.strict);
+                        mockCommand.getAfterOgnl(), mockCommand.getJsonPayload(), GlobalOptions.strict);
                 continue;
             }
             Method method = runtimeAdviceClass.getMethod("putMockConfig", Class.class, String.class, String.class,
-                    String.class, boolean.class);
+                    String.class, String.class, boolean.class);
             method.invoke(null, targetClass, methodName, mockCommand.getBeforeOgnl(), mockCommand.getAfterOgnl(),
-                    GlobalOptions.strict);
+                    mockCommand.getJsonPayload(), GlobalOptions.strict);
         }
     }
 
@@ -500,13 +519,15 @@ public class MockCommand extends AnnotatedCommand {
     public static class OgnlMockAdvice {
 
         private static final String OGNL_STRICT_FIELD_NAME = "_useStricterInvocation";
+        private static final String JSON_PREFIX = "json:";
+        private static volatile JsonRuntime jsonRuntime;
 
         static Map<Class<?>, Map<String, MockConfig>> mockCommands = new ConcurrentHashMap<>();
 
         public static void putMockConfig(Class<?> clz, String methodPattern, String beforeOgnl, String afterOgnl,
-                boolean strict) {
+                String jsonPayload, boolean strict) {
             mockCommands.computeIfAbsent(clz, key -> new ConcurrentHashMap<>())
-                    .put(methodPattern, new MockConfig(beforeOgnl, afterOgnl, strict));
+                    .put(methodPattern, new MockConfig(beforeOgnl, afterOgnl, jsonPayload, strict));
         }
 
         public static void removeMock(Class<?> clz) {
@@ -530,6 +551,7 @@ public class MockCommand extends AnnotatedCommand {
                     lines.add(className + "#" + methodEntry.getKey()
                             + " [before=" + String.valueOf(config.getBeforeOgnl())
                             + ", after=" + String.valueOf(config.getAfterOgnl())
+                            + ", json=" + String.valueOf(config.getJsonPayload())
                             + ", strict=" + config.isStrict() + "]");
                 }
             }
@@ -603,13 +625,55 @@ public class MockCommand extends AnnotatedCommand {
                 express = mockConfig.getBeforeOgnl();
             }
 
+            express = normalizeJsonAlias(express);
             try {
+                bindJsonArgumentIfNecessary(ognlContext, clazz, methodName, mockConfig, isAfter);
+                if (isJsonShorthand(express)) {
+                    applyJsonShorthand(ognlContext, clazz, methodName, express, isAfter);
+                    return ognlContext;
+                }
                 getExpressionResult(express, ognlContext, mockConfig.isStrict());
             } catch (Throwable e) {
                 throw MockCommand.propagateMockException(e);
             }
 
             return ognlContext;
+        }
+
+        private static void bindJsonArgumentIfNecessary(OgnlContext ognlContext,
+                Class<?> clazz,
+                String methodName,
+                MockConfig mockConfig,
+                boolean isAfter) {
+            if (ognlContext == null || mockConfig == null || mockConfig.getJsonPayload() == null
+                    || mockConfig.getJsonPayload().trim().isEmpty()) {
+                return;
+            }
+            Method method = resolveReflectiveMethod(clazz, methodName, ognlContext.getParams());
+            ognlContext.setJson(resolveTypedJsonValue(mockConfig.getJsonPayload(), method, ognlContext.getParams(), isAfter));
+        }
+
+        private static Object resolveTypedJsonValue(String jsonPayload, Method method, Object[] params, boolean isAfter) {
+            Object parsedJson = parseJsonPayload(jsonPayload);
+            if (isAfter) {
+                return convertJsonValue(parsedJson, method.getGenericReturnType());
+            }
+            if (params == null || params.length == 0) {
+                return parsedJson;
+            }
+            Type[] parameterTypes = method.getGenericParameterTypes();
+            if (params.length == 1) {
+                return convertJsonValue(parsedJson, parameterTypes[0]);
+            }
+            if (parsedJson instanceof List) {
+                List<?> jsonArray = (List<?>) parsedJson;
+                Object[] converted = new Object[params.length];
+                for (int i = 0; i < params.length && i < jsonArray.size(); i++) {
+                    converted[i] = convertJsonValue(jsonArray.get(i), parameterTypes[i]);
+                }
+                return converted;
+            }
+            return parsedJson;
         }
 
         private static Object getExpressionResult(String express, OgnlContext ognlContext, boolean strict)
@@ -665,6 +729,194 @@ public class MockCommand extends AnnotatedCommand {
             }
         }
 
+        private static boolean isJsonShorthand(String express) {
+            if (express == null) {
+                return false;
+            }
+            String trimmed = express.trim();
+            return trimmed.startsWith(JSON_PREFIX) || looksLikeRawJson(trimmed);
+        }
+
+        private static String normalizeJsonAlias(String express) {
+            if (express == null || express.indexOf("#json") < 0) {
+                return express;
+            }
+            StringBuilder builder = new StringBuilder(express.length() + 16);
+            boolean inSingleQuote = false;
+            boolean inDoubleQuote = false;
+            for (int i = 0; i < express.length(); i++) {
+                char ch = express.charAt(i);
+                if (ch == '\'' && !inDoubleQuote && !isEscaped(express, i)) {
+                    inSingleQuote = !inSingleQuote;
+                } else if (ch == '"' && !inSingleQuote && !isEscaped(express, i)) {
+                    inDoubleQuote = !inDoubleQuote;
+                }
+                if (!inSingleQuote && !inDoubleQuote && startsWithJsonAlias(express, i)) {
+                    builder.append("#this.json");
+                    i += 4;
+                    continue;
+                }
+                builder.append(ch);
+            }
+            return builder.toString();
+        }
+
+        private static boolean startsWithJsonAlias(String express, int index) {
+            if (!express.startsWith("#json", index)) {
+                return false;
+            }
+            int nextIndex = index + 5;
+            if (nextIndex >= express.length()) {
+                return true;
+            }
+            char next = express.charAt(nextIndex);
+            return !Character.isLetterOrDigit(next) && next != '_' && next != '$';
+        }
+
+        private static boolean isEscaped(String text, int index) {
+            int backslashCount = 0;
+            for (int i = index - 1; i >= 0 && text.charAt(i) == '\\'; i--) {
+                backslashCount++;
+            }
+            return backslashCount % 2 != 0;
+        }
+
+        private static boolean looksLikeRawJson(String express) {
+            return (express.startsWith("{") && express.endsWith("}") && express.contains(":"))
+                    || (express.startsWith("[") && express.endsWith("]"));
+        }
+
+        private static String extractJsonPayload(String express) {
+            String trimmed = express.trim();
+            if (trimmed.startsWith(JSON_PREFIX)) {
+                return trimmed.substring(JSON_PREFIX.length()).trim();
+            }
+            return trimmed;
+        }
+
+        private static void applyJsonShorthand(OgnlContext ognlContext,
+                Class<?> clazz,
+                String methodName,
+                String express,
+                boolean isAfter) {
+            Method method = resolveReflectiveMethod(clazz, methodName, ognlContext == null ? null : ognlContext.getParams());
+            Object parsedJson = parseJsonPayload(express);
+            if (isAfter) {
+                ognlContext.setReturnObj(convertJsonValue(parsedJson, method.getGenericReturnType()));
+                return;
+            }
+            applyJsonToParameters(ognlContext, method, parsedJson);
+        }
+
+        private static void applyJsonToParameters(OgnlContext ognlContext, Method method, Object parsedJson) {
+            Object[] params = ognlContext.getParams();
+            if (params == null || params.length == 0) {
+                throw new IllegalArgumentException("before JSON shorthand requires at least one method parameter");
+            }
+
+            Type[] parameterTypes = method.getGenericParameterTypes();
+            if (params.length == 1) {
+                params[0] = convertJsonValue(parsedJson, parameterTypes[0]);
+                ognlContext.skip = false;
+                return;
+            }
+
+            if (parsedJson instanceof List) {
+                List<?> jsonArray = (List<?>) parsedJson;
+                if (jsonArray.size() != params.length) {
+                    throw new IllegalArgumentException("JSON array parameter count mismatch, expected "
+                            + params.length + " but was " + jsonArray.size());
+                }
+                for (int i = 0; i < params.length; i++) {
+                    params[i] = convertJsonValue(jsonArray.get(i), parameterTypes[i]);
+                }
+                ognlContext.skip = false;
+                return;
+            }
+
+            if (parsedJson instanceof Map) {
+                Map<?, ?> jsonObject = (Map<?, ?>) parsedJson;
+                for (Map.Entry<?, ?> entry : jsonObject.entrySet()) {
+                    String key = String.valueOf(entry.getKey());
+                    int parameterIndex = resolveParameterIndex(key, params.length);
+                    params[parameterIndex] = convertJsonValue(entry.getValue(), parameterTypes[parameterIndex]);
+                }
+                ognlContext.skip = false;
+                return;
+            }
+
+            throw new IllegalArgumentException("before JSON shorthand requires a JSON object or array for multi-parameter methods");
+        }
+
+        private static int resolveParameterIndex(String key, int parameterCount) {
+            String normalized = key == null ? "" : key.trim();
+            if (normalized.startsWith("arg")) {
+                normalized = normalized.substring(3);
+            }
+            int index;
+            try {
+                index = Integer.parseInt(normalized);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Unsupported JSON parameter key: " + key
+                        + ", use 0/1/2... or arg0/arg1/arg2...");
+            }
+            if (index < 0 || index >= parameterCount) {
+                throw new IllegalArgumentException("JSON parameter index out of range: " + index);
+            }
+            return index;
+        }
+
+        private static Object convertJsonValue(Object parsedJson, Type targetType) {
+            if (parsedJson == null) {
+                return null;
+            }
+            if (targetType instanceof Class && ((Class<?>) targetType).isInstance(parsedJson)) {
+                return parsedJson;
+            }
+            return jsonRuntime().parseObject(jsonRuntime().toJSONString(parsedJson), targetType);
+        }
+
+        private static Object parseJsonPayload(String express) {
+            return jsonRuntime().parse(extractJsonPayload(express));
+        }
+
+        private static JsonRuntime jsonRuntime() {
+            if (jsonRuntime != null) {
+                return jsonRuntime;
+            }
+            synchronized (OgnlMockAdvice.class) {
+                if (jsonRuntime == null) {
+                    jsonRuntime = JsonRuntime.create();
+                }
+                return jsonRuntime;
+            }
+        }
+
+        private static Method resolveReflectiveMethod(Class<?> clazz, String methodName, Object[] args) {
+            if (clazz == null || methodName == null) {
+                throw new IllegalArgumentException("Unable to resolve reflective method for JSON shorthand");
+            }
+            int parameterCount = args == null ? -1 : args.length;
+            List<Method> candidates = new ArrayList<Method>();
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (!method.isBridge()
+                        && !method.isSynthetic()
+                        && method.getName().equals(methodName)
+                        && (parameterCount < 0 || method.getParameterTypes().length == parameterCount)) {
+                    candidates.add(method);
+                }
+            }
+            if (candidates.isEmpty()) {
+                throw new IllegalArgumentException("No reflective method named '" + methodName + "' found on "
+                        + clazz.getName());
+            }
+            if (candidates.size() > 1) {
+                throw new IllegalArgumentException("JSON shorthand does not support overloaded method: "
+                        + clazz.getName() + "#" + methodName + ", please use explicit OGNL instead");
+            }
+            return candidates.get(0);
+        }
+
 
         private static void updateStrictField(Field field, boolean value) throws ReflectiveOperationException {
             try {
@@ -697,14 +949,95 @@ public class MockCommand extends AnnotatedCommand {
             return methodMocks.get(methodName);
         }
 
+        private static final class JsonRuntime {
+            private static final String[] PACKAGE_CANDIDATES = new String[] {
+                    "com.alibaba.arthas.deps.com.alibaba.fastjson2",
+                    "com.alibaba.fastjson2"
+            };
+
+            private final Method parseMethod;
+            private final Method parseObjectMethod;
+            private final Method toJSONStringMethod;
+            private final Object autoTypeFeatures;
+
+            private JsonRuntime(Method parseMethod, Method parseObjectMethod, Method toJSONStringMethod,
+                    Object autoTypeFeatures) {
+                this.parseMethod = parseMethod;
+                this.parseObjectMethod = parseObjectMethod;
+                this.toJSONStringMethod = toJSONStringMethod;
+                this.autoTypeFeatures = autoTypeFeatures;
+            }
+
+            private static JsonRuntime create() {
+                ClassLoader[] loaders = new ClassLoader[] {
+                        Thread.currentThread().getContextClassLoader(),
+                        MockCommand.class.getClassLoader(),
+                        ClassLoader.getSystemClassLoader()
+                };
+                Throwable lastError = null;
+                for (String packageName : PACKAGE_CANDIDATES) {
+                    for (ClassLoader loader : loaders) {
+                        try {
+                            return create(packageName, loader);
+                        } catch (Throwable throwable) {
+                            lastError = throwable;
+                        }
+                    }
+                }
+                throw new IllegalStateException("No supported fastjson2 runtime found.", lastError);
+            }
+
+            @SuppressWarnings({ "unchecked", "rawtypes" })
+            private static JsonRuntime create(String packageName, ClassLoader loader) throws Exception {
+                Class<?> jsonClass = Class.forName(packageName + ".JSON", false, loader);
+                Class<?> featureClass = Class.forName(packageName + ".JSONReader$Feature", false, loader);
+                Object featureArray = Array.newInstance(featureClass, 1);
+                Object supportAutoType = Enum.valueOf((Class<? extends Enum>) featureClass.asSubclass(Enum.class),
+                        "SupportAutoType");
+                Array.set(featureArray, 0, supportAutoType);
+                Class<?> featureArrayClass = featureArray.getClass();
+                Method parseMethod = jsonClass.getMethod("parse", String.class, featureArrayClass);
+                Method parseObjectMethod = jsonClass.getMethod("parseObject", String.class, Type.class,
+                        featureArrayClass);
+                Method toJSONStringMethod = jsonClass.getMethod("toJSONString", Object.class);
+                return new JsonRuntime(parseMethod, parseObjectMethod, toJSONStringMethod, featureArray);
+            }
+
+            private Object parse(String payload) {
+                try {
+                    return parseMethod.invoke(null, payload, autoTypeFeatures);
+                } catch (Exception e) {
+                    throw MockCommand.propagateMockException(e);
+                }
+            }
+
+            private Object parseObject(String payload, Type targetType) {
+                try {
+                    return parseObjectMethod.invoke(null, payload, targetType, autoTypeFeatures);
+                } catch (Exception e) {
+                    throw MockCommand.propagateMockException(e);
+                }
+            }
+
+            private String toJSONString(Object value) {
+                try {
+                    return String.valueOf(toJSONStringMethod.invoke(null, value));
+                } catch (Exception e) {
+                    throw MockCommand.propagateMockException(e);
+                }
+            }
+        }
+
         private static final class MockConfig {
             private final String beforeOgnl;
             private final String afterOgnl;
+            private final String jsonPayload;
             private final boolean strict;
 
-            private MockConfig(String beforeOgnl, String afterOgnl, boolean strict) {
+            private MockConfig(String beforeOgnl, String afterOgnl, String jsonPayload, boolean strict) {
                 this.beforeOgnl = beforeOgnl;
                 this.afterOgnl = afterOgnl;
+                this.jsonPayload = jsonPayload;
                 this.strict = strict;
             }
 
@@ -714,6 +1047,10 @@ public class MockCommand extends AnnotatedCommand {
 
             private String getAfterOgnl() {
                 return afterOgnl;
+            }
+
+            private String getJsonPayload() {
+                return jsonPayload;
             }
 
             private boolean isStrict() {

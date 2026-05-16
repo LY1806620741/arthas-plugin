@@ -254,6 +254,191 @@ public class MockCommandTest {
         }
     }
 
+    @Test
+    @DisplayName("测试 afterOgnl 支持 JSON 转返回对象并包含子对象")
+    void testAfterOgnlSupportsJsonObjectReturn() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonReturnTarget target = new JsonReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommand(JsonReturnTarget.class.getName(), "load",
+                "json:{\"name\":\"mock-user\",\"child\":{\"city\":\"hangzhou\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        JsonUser user = target.load();
+        Assertions.assertEquals("mock-user", user.name);
+        Assertions.assertNotNull(user.child);
+        Assertions.assertEquals("hangzhou", user.child.city);
+    }
+
+    @Test
+    @DisplayName("测试 beforeOgnl 支持 JSON 替换单个对象入参并保留方法执行")
+    void testBeforeOgnlSupportsJsonSingleParameterReplacement() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonArgumentTarget target = new JsonArgumentTarget();
+        MockCommand mockCommand = buildMockCommand(JsonArgumentTarget.class.getName(), "describe",
+                "json:{\"name\":\"mock-user\",\"child\":{\"city\":\"shenzhen\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        String result = target.describe(new JsonUser("origin", new JsonChild("beijing")));
+        Assertions.assertEquals("mock-user@shenzhen", result);
+    }
+
+    @Test
+    @DisplayName("测试 beforeOgnl 支持 JSON 数组替换多个入参")
+    void testBeforeOgnlSupportsJsonArrayForMultipleParameters() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonMultiArgumentTarget target = new JsonMultiArgumentTarget();
+        MockCommand mockCommand = buildMockCommand(JsonMultiArgumentTarget.class.getName(), "join",
+                "json:[\"prefix\", {\"name\":\"multi\",\"child\":{\"city\":\"guangzhou\"}}]");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        String result = target.join("ignored", new JsonUser("origin", new JsonChild("beijing")));
+        Assertions.assertEquals("prefix:multi@guangzhou", result);
+    }
+
+    @Test
+    @DisplayName("测试 json 参数会先转对象并可在 afterOgnl 中修改后赋给 returnObj")
+    void testJsonOptionCanBeMutatedAndAssignedToReturnObject() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonReturnTarget target = new JsonReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommandWithJson(JsonReturnTarget.class.getName(), "load",
+                "#this.json.child.city='nanjing',#this.returnObj=#this.json",
+                "{\"name\":\"json-option\",\"child\":{\"city\":\"hangzhou\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        JsonUser user = target.load();
+        Assertions.assertEquals("json-option", user.name);
+        Assertions.assertNotNull(user.child);
+        Assertions.assertEquals("nanjing", user.child.city);
+    }
+
+    @Test
+    @DisplayName("测试 json 参数会先转对象并可在 beforeOgnl 中修改后赋给参数")
+    void testJsonOptionCanBeMutatedAndAssignedToParameter() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonArgumentTarget target = new JsonArgumentTarget();
+        MockCommand mockCommand = buildMockCommandWithJson(JsonArgumentTarget.class.getName(), "describe",
+                "#this.json.child.city='suzhou',#this.params[0]=#this.json,#this.skip=false",
+                "{\"name\":\"json-before\",\"child\":{\"city\":\"shanghai\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        String result = target.describe(new JsonUser("origin", new JsonChild("beijing")));
+        Assertions.assertEquals("json-before@suzhou", result);
+    }
+
+    @Test
+    @DisplayName("测试 OGNL 中支持 #json 作为 #this.json 的别名")
+    void testJsonAliasCanBeUsedInOgnl() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonReturnTarget target = new JsonReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommandWithJson(JsonReturnTarget.class.getName(), "load",
+                "#json.child.city='wuxi',#this.returnObj=#json",
+                "{\"name\":\"json-alias\",\"child\":{\"city\":\"hangzhou\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        JsonUser user = target.load();
+        Assertions.assertEquals("json-alias", user.name);
+        Assertions.assertNotNull(user.child);
+        Assertions.assertEquals("wuxi", user.child.city);
+    }
+
+    @Test
+    @DisplayName("测试直接 OGNL 修改 json 后可直接赋给参数")
+    void testJsonCanBeMutatedAndAssignedDirectlyToParameter() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonArgumentTarget target = new JsonArgumentTarget();
+        MockCommand mockCommand = buildMockCommandWithJson(JsonArgumentTarget.class.getName(), "describe",
+                "#json.child.city='changsha',#this.params[0]=#json,#this.skip=false",
+                "{\"name\":\"json-helper\",\"child\":{\"city\":\"shanghai\"}}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        String result = target.describe(new JsonUser("origin", new JsonChild("beijing")));
+        Assertions.assertEquals("json-helper@changsha", result);
+    }
+
+    @Test
+    @DisplayName("测试 json: 返回对象支持通过 @type 指定具体子类型")
+    void testJsonShorthandSupportsAutoTypeForReturnObject() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonAutoTypeReturnTarget target = new JsonAutoTypeReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommand(JsonAutoTypeReturnTarget.class.getName(), "load",
+                "json:" + autoTypeJson(JsonDog.class.getName(), "lucky", "corgi"));
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        JsonAnimal animal = target.load();
+        Assertions.assertInstanceOf(JsonDog.class, animal);
+        Assertions.assertEquals("lucky", animal.name);
+        Assertions.assertEquals("corgi", ((JsonDog) animal).breed);
+    }
+
+    @Test
+    @DisplayName("测试 json: 入参替换支持通过 @type 指定具体子类型")
+    void testJsonShorthandSupportsAutoTypeForParameter() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonAutoTypeArgumentTarget target = new JsonAutoTypeArgumentTarget();
+        MockCommand mockCommand = buildMockCommand(JsonAutoTypeArgumentTarget.class.getName(), "describe",
+                "json:" + autoTypeJson(JsonDog.class.getName(), "buddy", "akita"));
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        String result = target.describe(new JsonAnimal("origin"));
+        Assertions.assertEquals("JsonDog:buddy:akita", result);
+    }
+
+    @Test
+    @DisplayName("测试 -j 绑定的 json 支持 @type 并可直接 OGNL 修改后赋给返回值")
+    void testJsonOptionSupportsAutoTypeAndDirectOgnlMutation() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonAutoTypeReturnTarget target = new JsonAutoTypeReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommandWithJson(JsonAutoTypeReturnTarget.class.getName(), "load",
+                "#json.name='patched-dog',#this.returnObj=#json",
+                autoTypeJson(JsonDog.class.getName(), "lucky", "corgi"));
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        JsonAnimal animal = target.load();
+        Assertions.assertInstanceOf(JsonDog.class, animal);
+        Assertions.assertEquals("patched-dog", animal.name);
+        Assertions.assertEquals("corgi", ((JsonDog) animal).breed);
+    }
+
     private Instrumentation installInstrumentation() throws Throwable {
         Instrumentation instrumentation = ByteBuddyAgent.install();
 
@@ -296,6 +481,19 @@ public class MockCommandTest {
         return mockCommand;
     }
 
+    private MockCommand buildMockCommandWithJson(String classPattern, String methodPattern, String beforeOgnl, String jsonPayload) {
+        MockCommand mockCommand = buildMockCommand(classPattern, methodPattern, beforeOgnl);
+        mockCommand.setJsonPayload(jsonPayload);
+        return mockCommand;
+    }
+
+    private MockCommand buildAfterMockCommandWithJson(String classPattern, String methodPattern, String afterOgnl,
+            String jsonPayload) {
+        MockCommand mockCommand = buildAfterMockCommand(classPattern, methodPattern, afterOgnl);
+        mockCommand.setJsonPayload(jsonPayload);
+        return mockCommand;
+    }
+
     static class DualMethodTarget {
         String first() {
             return "first";
@@ -316,6 +514,90 @@ public class MockCommandTest {
         public String value() {
             return "origin";
         }
+    }
+
+    public static class JsonReturnTarget {
+        public JsonUser load() {
+            return new JsonUser("origin", new JsonChild("beijing"));
+        }
+    }
+
+    public static class JsonArgumentTarget {
+        public String describe(JsonUser user) {
+            return user.name + "@" + user.child.city;
+        }
+    }
+
+    public static class JsonMultiArgumentTarget {
+        public String join(String prefix, JsonUser user) {
+            return prefix + ":" + user.name + "@" + user.child.city;
+        }
+    }
+
+    public static class JsonAutoTypeReturnTarget {
+        public JsonAnimal load() {
+            return new JsonAnimal("origin");
+        }
+    }
+
+    public static class JsonAutoTypeArgumentTarget {
+        public String describe(JsonAnimal animal) {
+            if (animal instanceof JsonDog) {
+                return animal.getClass().getSimpleName() + ":" + animal.name + ":" + ((JsonDog) animal).breed;
+            }
+            return animal.getClass().getSimpleName() + ":" + animal.name;
+        }
+    }
+
+    public static class JsonAnimal {
+        public String name;
+
+        public JsonAnimal() {
+        }
+
+        public JsonAnimal(String name) {
+            this.name = name;
+        }
+    }
+
+    public static class JsonDog extends JsonAnimal {
+        public String breed;
+
+        public JsonDog() {
+        }
+
+        public JsonDog(String name, String breed) {
+            super(name);
+            this.breed = breed;
+        }
+    }
+
+    public static class JsonUser {
+        public String name;
+        public JsonChild child;
+
+        public JsonUser() {
+        }
+
+        public JsonUser(String name, JsonChild child) {
+            this.name = name;
+            this.child = child;
+        }
+    }
+
+    public static class JsonChild {
+        public String city;
+
+        public JsonChild() {
+        }
+
+        public JsonChild(String city) {
+            this.city = city;
+        }
+    }
+
+    private String autoTypeJson(String typeName, String name, String breed) {
+        return "{\"@type\":\"" + typeName + "\",\"name\":\"" + name + "\",\"breed\":\"" + breed + "\"}";
     }
 
     private static CglibProxyTarget createCglibProxy() {

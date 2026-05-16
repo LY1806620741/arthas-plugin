@@ -14,16 +14,13 @@ public class OgnlContext {
     private Throwable throwExp;
 
     /**
-     * for finish
+     * OGNL runtime context for mock execution.
      *
      * @param loader    类加载器
      * @param clazz     类
      * @param method    方法
      * @param target    目标类
      * @param params    调用参数
-     * @param returnObj 返回值
-     * @param throwExp  抛出异常
-     * @param access    进入场景
      */
     private OgnlContext(
         ClassLoader loader,
@@ -43,6 +40,8 @@ public class OgnlContext {
     public Boolean skip = true;
 
     public Object returnObj = Optional.empty();
+
+    private Object json = Optional.empty();
 
     public static OgnlContext init(ClassLoader loader,
             Class<?> clazz,
@@ -90,5 +89,13 @@ public class OgnlContext {
 
     public void setReturnObj(Object returnObj) {
         this.returnObj = returnObj == null ? Optional.empty() : returnObj;
+    }
+
+    public Object getJson() {
+        return json;
+    }
+
+    public void setJson(Object json) {
+        this.json = json == null ? Optional.empty() : json;
     }
 }
