@@ -255,50 +255,15 @@ public class MockCommandTest {
     }
 
     @Test
-    @DisplayName("测试 afterOgnl 支持 JSON 转返回对象并包含子对象")
-    void testAfterOgnlSupportsJsonObjectReturn() throws Throwable {
-        Instrumentation instrumentation = installInstrumentation();
-        CommandProcess commandProcess = mockCommandProcess(instrumentation);
-
-        JsonReturnTarget target = new JsonReturnTarget();
-        MockCommand mockCommand = buildAfterMockCommand(JsonReturnTarget.class.getName(), "load",
-                "json:{\"name\":\"mock-user\",\"child\":{\"city\":\"hangzhou\"}}");
-
-        mockCommand.process(commandProcess);
-
-        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
-        JsonUser user = target.load();
-        Assertions.assertEquals("mock-user", user.name);
-        Assertions.assertNotNull(user.child);
-        Assertions.assertEquals("hangzhou", user.child.city);
-    }
-
-    @Test
-    @DisplayName("测试 beforeOgnl 支持 JSON 替换单个对象入参并保留方法执行")
-    void testBeforeOgnlSupportsJsonSingleParameterReplacement() throws Throwable {
-        Instrumentation instrumentation = installInstrumentation();
-        CommandProcess commandProcess = mockCommandProcess(instrumentation);
-
-        JsonArgumentTarget target = new JsonArgumentTarget();
-        MockCommand mockCommand = buildMockCommand(JsonArgumentTarget.class.getName(), "describe",
-                "json:{\"name\":\"mock-user\",\"child\":{\"city\":\"shenzhen\"}}");
-
-        mockCommand.process(commandProcess);
-
-        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
-        String result = target.describe(new JsonUser("origin", new JsonChild("beijing")));
-        Assertions.assertEquals("mock-user@shenzhen", result);
-    }
-
-    @Test
-    @DisplayName("测试 beforeOgnl 支持 JSON 数组替换多个入参")
-    void testBeforeOgnlSupportsJsonArrayForMultipleParameters() throws Throwable {
+    @DisplayName("测试 -j 支持预载 JSON 数组并通过 OGNL 替换多个入参")
+    void testJsonOptionArrayCanBeAssignedToMultipleParameters() throws Throwable {
         Instrumentation instrumentation = installInstrumentation();
         CommandProcess commandProcess = mockCommandProcess(instrumentation);
 
         JsonMultiArgumentTarget target = new JsonMultiArgumentTarget();
-        MockCommand mockCommand = buildMockCommand(JsonMultiArgumentTarget.class.getName(), "join",
-                "json:[\"prefix\", {\"name\":\"multi\",\"child\":{\"city\":\"guangzhou\"}}]");
+        MockCommand mockCommand = buildMockCommandWithJson(JsonMultiArgumentTarget.class.getName(), "join",
+                "#this.params[0]=#json[0],#this.params[1]=#json[1],#this.skip=false",
+                "[\"prefix\", {\"name\":\"multi\",\"child\":{\"city\":\"guangzhou\"}}]");
 
         mockCommand.process(commandProcess);
 
@@ -383,41 +348,6 @@ public class MockCommandTest {
         Assertions.assertEquals("json-helper@changsha", result);
     }
 
-    @Test
-    @DisplayName("测试 json: 返回对象支持通过 @type 指定具体子类型")
-    void testJsonShorthandSupportsAutoTypeForReturnObject() throws Throwable {
-        Instrumentation instrumentation = installInstrumentation();
-        CommandProcess commandProcess = mockCommandProcess(instrumentation);
-
-        JsonAutoTypeReturnTarget target = new JsonAutoTypeReturnTarget();
-        MockCommand mockCommand = buildAfterMockCommand(JsonAutoTypeReturnTarget.class.getName(), "load",
-                "json:" + autoTypeJson(JsonDog.class.getName(), "lucky", "corgi"));
-
-        mockCommand.process(commandProcess);
-
-        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
-        JsonAnimal animal = target.load();
-        Assertions.assertInstanceOf(JsonDog.class, animal);
-        Assertions.assertEquals("lucky", animal.name);
-        Assertions.assertEquals("corgi", ((JsonDog) animal).breed);
-    }
-
-    @Test
-    @DisplayName("测试 json: 入参替换支持通过 @type 指定具体子类型")
-    void testJsonShorthandSupportsAutoTypeForParameter() throws Throwable {
-        Instrumentation instrumentation = installInstrumentation();
-        CommandProcess commandProcess = mockCommandProcess(instrumentation);
-
-        JsonAutoTypeArgumentTarget target = new JsonAutoTypeArgumentTarget();
-        MockCommand mockCommand = buildMockCommand(JsonAutoTypeArgumentTarget.class.getName(), "describe",
-                "json:" + autoTypeJson(JsonDog.class.getName(), "buddy", "akita"));
-
-        mockCommand.process(commandProcess);
-
-        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
-        String result = target.describe(new JsonAnimal("origin"));
-        Assertions.assertEquals("JsonDog:buddy:akita", result);
-    }
 
     @Test
     @DisplayName("测试 -j 绑定的 json 支持 @type 并可直接 OGNL 修改后赋给返回值")
