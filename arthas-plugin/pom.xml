@@ -18,6 +18,7 @@
     <properties>
         <maven.antrun.plugin.version>3.2.0</maven.antrun.plugin.version>
         <maven.jar.plugin.version>3.5.0</maven.jar.plugin.version>
+        <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
         <maven.failsafe.plugin.version>3.2.5</maven.failsafe.plugin.version>
         <build.helper.plugin.version>3.5.0</build.helper.plugin.version>
         <bytebuddy.version>1.18.3</bytebuddy.version>
@@ -232,6 +233,34 @@
                         </manifest>
                     </archive>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven.shade.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>relocate-fastjson2-reference</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <includes>
+                                    <include>${project.groupId}:${project.artifactId}</include>
+                                </includes>
+                            </artifactSet>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.alibaba.fastjson2</pattern>
+                                    <shadedPattern>com.alibaba.arthas.deps.com.alibaba.fastjson2</shadedPattern>
+                                </relocation>
+                            </relocations>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

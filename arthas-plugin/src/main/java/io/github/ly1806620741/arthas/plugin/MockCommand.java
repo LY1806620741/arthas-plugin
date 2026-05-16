@@ -2,7 +2,6 @@ package io.github.ly1806620741.arthas.plugin;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;
-import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
@@ -24,6 +23,8 @@ import com.taobao.arthas.core.GlobalOptions;
 import com.alibaba.arthas.deps.org.slf4j.Logger;
 import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.alibaba.bytekit.utils.Decompiler;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONReader;
 import com.taobao.arthas.common.ReflectUtils;
 import com.taobao.arthas.core.advisor.ArthasMethod;
 import com.taobao.arthas.core.command.express.ExpressException;
@@ -520,7 +521,9 @@ public class MockCommand extends AnnotatedCommand {
 
         private static final String OGNL_STRICT_FIELD_NAME = "_useStricterInvocation";
         private static final String JSON_PREFIX = "json:";
-        private static volatile JsonRuntime jsonRuntime;
+        private static final JSONReader.Feature[] AUTO_TYPE_FEATURES = new JSONReader.Feature[] {
+                JSONReader.Feature.SupportAutoType
+        };
 
         static Map<Class<?>, Map<String, MockConfig>> mockCommands = new ConcurrentHashMap<>();
 
@@ -873,23 +876,11 @@ public class MockCommand extends AnnotatedCommand {
             if (targetType instanceof Class && ((Class<?>) targetType).isInstance(parsedJson)) {
                 return parsedJson;
             }
-            return jsonRuntime().parseObject(jsonRuntime().toJSONString(parsedJson), targetType);
+            return JSON.parseObject(JSON.toJSONString(parsedJson), targetType, AUTO_TYPE_FEATURES);
         }
 
         private static Object parseJsonPayload(String express) {
-            return jsonRuntime().parse(extractJsonPayload(express));
-        }
-
-        private static JsonRuntime jsonRuntime() {
-            if (jsonRuntime != null) {
-                return jsonRuntime;
-            }
-            synchronized (OgnlMockAdvice.class) {
-                if (jsonRuntime == null) {
-                    jsonRuntime = JsonRuntime.create();
-                }
-                return jsonRuntime;
-            }
+            return JSON.parse(extractJsonPayload(express), AUTO_TYPE_FEATURES);
         }
 
         private static Method resolveReflectiveMethod(Class<?> clazz, String methodName, Object[] args) {
@@ -949,84 +940,6 @@ public class MockCommand extends AnnotatedCommand {
             return methodMocks.get(methodName);
         }
 
-        private static final class JsonRuntime {
-            private static final String[] PACKAGE_CANDIDATES = new String[] {
-                    "com.alibaba.arthas.deps.com.alibaba.fastjson2",
-                    "com.alibaba.fastjson2"
-            };
-
-            private final Method parseMethod;
-            private final Method parseObjectMethod;
-            private final Method toJSONStringMethod;
-            private final Object autoTypeFeatures;
-
-            private JsonRuntime(Method parseMethod, Method parseObjectMethod, Method toJSONStringMethod,
-                    Object autoTypeFeatures) {
-                this.parseMethod = parseMethod;
-                this.parseObjectMethod = parseObjectMethod;
-                this.toJSONStringMethod = toJSONStringMethod;
-                this.autoTypeFeatures = autoTypeFeatures;
-            }
-
-            private static JsonRuntime create() {
-                ClassLoader[] loaders = new ClassLoader[] {
-                        Thread.currentThread().getContextClassLoader(),
-                        MockCommand.class.getClassLoader(),
-                        ClassLoader.getSystemClassLoader()
-                };
-                Throwable lastError = null;
-                for (String packageName : PACKAGE_CANDIDATES) {
-                    for (ClassLoader loader : loaders) {
-                        try {
-                            return create(packageName, loader);
-                        } catch (Throwable throwable) {
-                            lastError = throwable;
-                        }
-                    }
-                }
-                throw new IllegalStateException("No supported fastjson2 runtime found.", lastError);
-            }
-
-            @SuppressWarnings({ "unchecked", "rawtypes" })
-            private static JsonRuntime create(String packageName, ClassLoader loader) throws Exception {
-                Class<?> jsonClass = Class.forName(packageName + ".JSON", false, loader);
-                Class<?> featureClass = Class.forName(packageName + ".JSONReader$Feature", false, loader);
-                Object featureArray = Array.newInstance(featureClass, 1);
-                Object supportAutoType = Enum.valueOf((Class<? extends Enum>) featureClass.asSubclass(Enum.class),
-                        "SupportAutoType");
-                Array.set(featureArray, 0, supportAutoType);
-                Class<?> featureArrayClass = featureArray.getClass();
-                Method parseMethod = jsonClass.getMethod("parse", String.class, featureArrayClass);
-                Method parseObjectMethod = jsonClass.getMethod("parseObject", String.class, Type.class,
-                        featureArrayClass);
-                Method toJSONStringMethod = jsonClass.getMethod("toJSONString", Object.class);
-                return new JsonRuntime(parseMethod, parseObjectMethod, toJSONStringMethod, featureArray);
-            }
-
-            private Object parse(String payload) {
-                try {
-                    return parseMethod.invoke(null, payload, autoTypeFeatures);
-                } catch (Exception e) {
-                    throw MockCommand.propagateMockException(e);
-                }
-            }
-
-            private Object parseObject(String payload, Type targetType) {
-                try {
-                    return parseObjectMethod.invoke(null, payload, targetType, autoTypeFeatures);
-                } catch (Exception e) {
-                    throw MockCommand.propagateMockException(e);
-                }
-            }
-
-            private String toJSONString(Object value) {
-                try {
-                    return String.valueOf(toJSONStringMethod.invoke(null, value));
-                } catch (Exception e) {
-                    throw MockCommand.propagateMockException(e);
-                }
-            }
-        }
 
         private static final class MockConfig {
             private final String beforeOgnl;
