@@ -21,6 +21,7 @@ import com.taobao.arthas.core.shell.session.Session;
 
 import demo.MathGame;
 import net.bytebuddy.agent.ByteBuddyAgent;
+import com.taobao.middleware.cli.annotations.Description;
 
 public class MockCommandTest {
 
@@ -75,6 +76,17 @@ public class MockCommandTest {
                 Assertions.assertNull(game.primeFactors(0));
             }
         }
+    }
+
+    @Test
+    @DisplayName("测试帮助文案包含双层多态 JSON 预解析示例")
+    void testDescriptionContainsDoublePolymorphismJsonExample() {
+        Description description = MockCommand.class.getAnnotation(Description.class);
+        Assertions.assertNotNull(description);
+        Assertions.assertTrue(description.value().contains("双层多态预解析示例(外层容器+内层元素都带@type)"));
+        Assertions.assertTrue(description.value().contains("\"@type\":\"com.demo.GenericListResult\""));
+        Assertions.assertTrue(description.value().contains("\"@type\":\"com.demo.Dog\""));
+        Assertions.assertTrue(description.value().contains("#this.params[0]=#json"));
     }
 
     @Test

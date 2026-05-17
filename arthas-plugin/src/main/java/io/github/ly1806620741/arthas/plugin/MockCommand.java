@@ -64,7 +64,8 @@ import ognl.OgnlRuntime;
         "  8. -j 预载JSON后修改返回值: mock com.demo.UserService getUser -j '{\"id\":1,\"profile\":{\"name\":\"arthas\"}}' -a '#json.profile.name=\"changed\",#this.returnObj=#json'\n" +
         "  9. -j 预载JSON后替换单个对象入参: mock com.demo.UserService save -j '{\"profile\":{\"name\":\"arthas\"}}' -b '#json.profile.name=\"patched\",#this.params[0]=#json,#this.skip=false'\n" +
         " 10. -j 预载JSON数组后替换多个入参: mock com.demo.OrderService create -j '[\"mock\", {\"id\":1}]' -b '#this.params[0]=#json[0],#this.params[1]=#json[1],#this.skip=false'\n" +
-        " 11. JSON支持@type指定具体对象类型: mock com.demo.AnimalService load -j '{\"@type\":\"com.demo.Dog\",\"name\":\"arthas\"}' -a '#this.returnObj=#json'\n")
+        " 11. JSON支持@type指定具体对象类型: mock com.demo.AnimalService load -j '{\"@type\":\"com.demo.Dog\",\"name\":\"arthas\"}' -a '#this.returnObj=#json'\n" +
+        " 12. 双层多态预解析示例(外层容器+内层元素都带@type): mock com.demo.AnimalService save -j '{\"@type\":\"com.demo.GenericListResult\",\"items\":[{\"@type\":\"com.demo.Dog\",\"name\":\"arthas\"}]}' -b '#json.items[0].name=\"patched\",#this.params[0]=#json,#this.skip=false'\n")
 public class MockCommand extends AnnotatedCommand {
 
     private static final Logger logger = LoggerFactory.getLogger(MockCommand.class);
