@@ -3,6 +3,8 @@ package io.github.ly1806620741.arthas.plugin;
 import java.io.File;
 import java.lang.instrument.Instrumentation;
 import java.security.CodeSource;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.jar.JarFile;
 
 import com.taobao.arthas.core.GlobalOptions;
@@ -293,6 +295,52 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("测试 -j 可将 JSON 数组转换为 List<T> 返回值")
+    void testJsonOptionCanBeAssignedToGenericListReturn() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonListReturnTarget target = new JsonListReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommandWithJson(JsonListReturnTarget.class.getName(), "load",
+                "#this.returnObj=#json",
+                "[{\"name\":\"list-user\",\"child\":{\"city\":\"hangzhou\"}}]");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        List<JsonUser> users = target.load();
+        Assertions.assertEquals(1, users.size());
+        Assertions.assertInstanceOf(JsonUser.class, users.get(0));
+        Assertions.assertEquals("list-user", users.get(0).name);
+        Assertions.assertNotNull(users.get(0).child);
+        Assertions.assertEquals("hangzhou", users.get(0).child.city);
+    }
+
+    @Test
+    @DisplayName("测试 -j 可将 JSON 转换为 GenericListResult<T> 返回值")
+    void testJsonOptionCanBeAssignedToNestedGenericReturn() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        JsonGenericListReturnTarget target = new JsonGenericListReturnTarget();
+        MockCommand mockCommand = buildAfterMockCommandWithJson(JsonGenericListReturnTarget.class.getName(), "load",
+                "#this.returnObj=#json",
+                "{\"code\":\"200\",\"items\":[{\"name\":\"generic-user\",\"child\":{\"city\":\"shenzhen\"}}]}");
+
+        mockCommand.process(commandProcess);
+
+        Mockito.verify(commandProcess).end(Mockito.eq(0), Mockito.eq("OK"));
+        GenericListResult<JsonUser> result = target.load();
+        Assertions.assertEquals("200", result.code);
+        Assertions.assertNotNull(result.items);
+        Assertions.assertEquals(1, result.items.size());
+        Assertions.assertInstanceOf(JsonUser.class, result.items.get(0));
+        Assertions.assertEquals("generic-user", result.items.get(0).name);
+        Assertions.assertNotNull(result.items.get(0).child);
+        Assertions.assertEquals("shenzhen", result.items.get(0).child.city);
+    }
+
+    @Test
     @DisplayName("测试 json 参数会先转对象并可在 beforeOgnl 中修改后赋给参数")
     void testJsonOptionCanBeMutatedAndAssignedToParameter() throws Throwable {
         Instrumentation instrumentation = installInstrumentation();
@@ -452,6 +500,24 @@ public class MockCommandTest {
         }
     }
 
+    public static class JsonListReturnTarget {
+        public List<JsonUser> load() {
+            List<JsonUser> users = new ArrayList<>();
+            users.add(new JsonUser("origin", new JsonChild("beijing")));
+            return users;
+        }
+    }
+
+    public static class JsonGenericListReturnTarget {
+        public GenericListResult<JsonUser> load() {
+            GenericListResult<JsonUser> result = new GenericListResult<>();
+            result.code = "origin";
+            result.items = new ArrayList<>();
+            result.items.add(new JsonUser("origin", new JsonChild("beijing")));
+            return result;
+        }
+    }
+
     public static class JsonArgumentTarget {
         public String describe(JsonUser user) {
             return user.name + "@" + user.child.city;
@@ -524,6 +590,11 @@ public class MockCommandTest {
         public JsonChild(String city) {
             this.city = city;
         }
+    }
+
+    public static class GenericListResult<T> {
+        public String code;
+        public List<T> items;
     }
 
     private String autoTypeJson(String typeName, String name, String breed) {

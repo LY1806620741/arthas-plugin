@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 @SpringBootApplication
 public class ArthasSpringBootProxyTargetApp {
@@ -81,12 +83,59 @@ public class ArthasSpringBootProxyTargetApp {
         public ResponseEntity<String> cglibClassName() {
             return new ResponseEntity<String>(cglibProxyTarget.getClass().getName(), HttpStatus.OK);
         }
+
+        @GetMapping("/mock/controller/list")
+        @ResponseBody
+        public List<JsonUserPayload> controllerList() {
+            List<JsonUserPayload> users = new ArrayList<JsonUserPayload>();
+            users.add(new JsonUserPayload("origin", new JsonChildPayload("beijing")));
+            return users;
+        }
+
+        @GetMapping("/mock/controller/generic-list-result")
+        @ResponseBody
+        public GenericListResult<JsonUserPayload> controllerGenericListResult() {
+            GenericListResult<JsonUserPayload> result = new GenericListResult<JsonUserPayload>();
+            result.code = "origin";
+            result.items = new ArrayList<JsonUserPayload>();
+            result.items.add(new JsonUserPayload("origin", new JsonChildPayload("beijing")));
+            return result;
+        }
     }
 
     public static class CglibProxyTarget {
         public String value() {
             return "origin";
         }
+    }
+
+    public static class JsonUserPayload {
+        public String name;
+        public JsonChildPayload child;
+
+        public JsonUserPayload() {
+        }
+
+        public JsonUserPayload(String name, JsonChildPayload child) {
+            this.name = name;
+            this.child = child;
+        }
+    }
+
+    public static class JsonChildPayload {
+        public String city;
+
+        public JsonChildPayload() {
+        }
+
+        public JsonChildPayload(String city) {
+            this.city = city;
+        }
+    }
+
+    public static class GenericListResult<T> {
+        public String code;
+        public List<T> items;
     }
 }
 

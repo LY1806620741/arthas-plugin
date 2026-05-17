@@ -238,6 +238,86 @@ class ArthasBootIntegrationIT {
         }
     }
 
+    @Test
+    @DisplayName("使用 original 插件增强官方 arthas-core 后验证可 mock Controller 的 List<T> 与 GenericListResult<T> 返回")
+    void artifactRegressionShouldMockControllerGenericReturns() throws Exception {
+        PreparedArtifact artifact = prepareEnhancedArtifact("arthas-controller-generic-regression-");
+        Path tempDir = artifact.tempDir;
+        Process springBootProcess = null;
+        try {
+            int appPort = findFreePort();
+            Path springBootLog = tempDir.resolve("spring-controller-generic-app.log");
+            springBootProcess = launchSpringBootProxyTargetApp(artifact.moduleDir, springBootLog, appPort);
+            String targetPid = processId(springBootProcess);
+
+            String controllerClassName = ArthasSpringBootProxyTargetApp.class.getName() + "$SampleController";
+
+            String originalList = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/controller/list"),
+                    "origin", Duration.ofSeconds(40));
+            Assertions.assertTrue(originalList.contains("origin"),
+                    () -> "mock 前 controller list 返回不符合预期:\n" + originalList);
+
+            String originalGenericResult = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/controller/generic-list-result"),
+                    "origin", Duration.ofSeconds(20));
+            Assertions.assertTrue(originalGenericResult.contains("origin"),
+                    () -> "mock 前 generic result 返回不符合预期:\n" + originalGenericResult);
+
+            ensureProcessAlive(springBootProcess, springBootLog);
+
+            int telnetPort = findFreePort();
+            ProcessResult strictResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "options strict false",
+                    tempDir.resolve("spring-controller-generic-options.log"), Duration.ofSeconds(90));
+            Assertions.assertEquals(0, strictResult.exitCode,
+                    () -> "关闭 strict 模式失败，输出:\n" + strictResult.output);
+
+            String mockCommand = "mock " + controllerClassName + " controllerList"
+                    + " -j '[{\"name\":\"controller-list\",\"child\":{\"city\":\"hangzhou\"}}]'"
+                    + " -a '#this.returnObj=#json';"
+                    + "mock " + controllerClassName + " controllerGenericListResult"
+                    + " -j '{\"code\":\"200\",\"items\":[{\"name\":\"controller-generic\",\"child\":{\"city\":\"shenzhen\"}}]}'"
+                    + " -a '#this.returnObj=#json';"
+                    + "mock --list";
+            ProcessResult attachResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, mockCommand,
+                    tempDir.resolve("spring-controller-generic-attach.log"), Duration.ofSeconds(90));
+
+            Assertions.assertEquals(0, attachResult.exitCode,
+                    () -> "arthas-boot 附着/执行 controller 泛型 mock 失败，输出:\n" + attachResult.output);
+            Assertions.assertFalse(attachResult.output.contains("command not found"),
+                    () -> "mock 命令未生效，输出:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("Active mocks:")
+                            && attachResult.output.contains(controllerClassName + "#controllerList")
+                            && attachResult.output.contains(controllerClassName + "#controllerGenericListResult"),
+                    () -> "附着输出中未发现 controller 泛型 mock 列表内容:\n" + attachResult.output);
+
+            String mockedList = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/controller/list"),
+                    "controller-list", Duration.ofSeconds(20));
+            Assertions.assertTrue(mockedList.contains("controller-list") && mockedList.contains("hangzhou"),
+                    () -> "mock 后 controller list 返回不符合预期:\n" + mockedList);
+
+            String mockedGenericResult = waitForHttpText(
+                    new URL("http://127.0.0.1:" + appPort + "/mock/controller/generic-list-result"),
+                    "controller-generic", Duration.ofSeconds(20));
+            Assertions.assertTrue(mockedGenericResult.contains("\"code\":\"200\"")
+                            && mockedGenericResult.contains("controller-generic")
+                            && mockedGenericResult.contains("shenzhen"),
+                    () -> "mock 后 generic result 返回不符合预期:\n" + mockedGenericResult);
+
+            ProcessResult stopResult = runArthasBootCommand(
+                    tempDir, telnetPort, targetPid, "stop",
+                    tempDir.resolve("spring-controller-generic-stop.log"), Duration.ofSeconds(60));
+            Assertions.assertEquals(0, stopResult.exitCode,
+                    () -> "stop 命令执行失败，输出:\n" + stopResult.output);
+        } finally {
+            destroyProcess(springBootProcess);
+            deleteRecursively(tempDir);
+        }
+    }
+
     private static PreparedArtifact prepareEnhancedArtifact(String tempDirPrefix) throws Exception {
         Path moduleDir = moduleDir();
         Path targetDir = moduleDir.resolve("target");
