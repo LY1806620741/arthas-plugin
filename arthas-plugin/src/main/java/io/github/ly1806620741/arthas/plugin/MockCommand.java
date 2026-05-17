@@ -290,7 +290,7 @@ public class MockCommand extends AnnotatedCommand {
 
             EnhancerAffect affect = new EnhancerAffect();
             List<RetransformEntry> entries = new ArrayList<>();
-            Map<Class<?>, Set<String>> methodsByTargetClass = new LinkedHashMap<Class<?>, Set<String>>();
+            Map<Class<?>, Set<String>> methodsByTargetClass = new LinkedHashMap<>();
 
             for (Class<?> clazz : matchingClasses) {
                 Class<?> targetClass = resolveEnhanceableClass(clazz);
@@ -298,7 +298,7 @@ public class MockCommand extends AnnotatedCommand {
                 if (matchedMethods.isEmpty()) {
                     continue;
                 }
-                methodsByTargetClass.computeIfAbsent(targetClass, key -> new LinkedHashSet<String>()).addAll(matchedMethods);
+                methodsByTargetClass.computeIfAbsent(targetClass, key -> new LinkedHashSet<>()).addAll(matchedMethods);
             }
 
             if (methodsByTargetClass.isEmpty()) {
@@ -361,11 +361,7 @@ public class MockCommand extends AnnotatedCommand {
         if (mockLines == null || mockLines.isEmpty()) {
             return "No active mocks.";
         }
-        StringBuilder builder = new StringBuilder("Active mocks:");
-        for (String mockLine : mockLines) {
-            builder.append('\n').append(mockLine);
-        }
-        return builder.toString();
+        return "Active mocks:\n" + String.join("\n", mockLines);
     }
 
     private static Class<?> resolveEnhanceableClass(Class<?> clazz) {
@@ -441,9 +437,7 @@ public class MockCommand extends AnnotatedCommand {
             mockedMethods = (String[]) method.invoke(null, targetClass);
         }
         Set<String> methodNames = new LinkedHashSet<>();
-        for (String mockedMethod : mockedMethods) {
-            methodNames.add(mockedMethod);
-        }
+        Collections.addAll(methodNames, mockedMethods);
         return methodNames;
     }
 
@@ -458,46 +452,36 @@ public class MockCommand extends AnnotatedCommand {
     }
 
     private void clearMock(Instrumentation inst) {
-        // 从全局 retransform 列表中移除
-        // TODO RetransformCommand.deleteRetransformEntry(classPattern, methodPattern,
-        // isRegEx);
-        // 重新 retransform 以恢复原始字节码
         Set<Class<?>> classes = SearchUtils.searchClass(inst, SearchUtils.classNameMatcher(classPattern, isRegEx));
         Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
         for (Class<?> clazz : classes) {
-            try {
-                inst.retransformClasses(clazz);
-            } catch (Exception e) {
-                logger.warn("Failed to retransform class on clear: " + clazz.getName(), e);
-            }
-            try {
-                removeRuntimeMock(runtimeAdviceClass, clazz);
-            } catch (ReflectiveOperationException e) {
-                logger.warn("Failed to remove runtime mock for class on clear: " + clazz.getName(), e);
-            }
+            restoreMockedClass(inst, runtimeAdviceClass, clazz, "clear");
             mockClass.remove(clazz);
         }
     }
 
     private void clearAllMocks(Instrumentation inst) {
-        // RetransformCommand.deleteAllRetransformEntry();TODO
         Class<?> runtimeAdviceClass = ensureAdviceClassesVisible(inst);
-        for (Class<?> className : new ArrayList<Class<?>>(mockClass)) {
+        for (Class<?> className : new ArrayList<>(mockClass)) {
             Set<Class<?>> classes = SearchUtils.searchClass(inst,
                     SearchUtils.classNameMatcher(className.getName(), false));
             for (Class<?> clazz : classes) {
-                try {
-                    inst.retransformClasses(clazz);
-                } catch (Exception e) {
-                    logger.warn("Failed to retransform class on clear-all: " + clazz.getName(), e);
-                }
-                try {
-                    removeRuntimeMock(runtimeAdviceClass, clazz);
-                } catch (ReflectiveOperationException e) {
-                    logger.warn("Failed to remove runtime mock for class on clear-all: " + clazz.getName(), e);
-                }
+                restoreMockedClass(inst, runtimeAdviceClass, clazz, "clear-all");
             }
             mockClass.remove(className);
+        }
+    }
+
+    private void restoreMockedClass(Instrumentation inst, Class<?> runtimeAdviceClass, Class<?> clazz, String action) {
+        try {
+            inst.retransformClasses(clazz);
+        } catch (Exception e) {
+            logger.warn("Failed to retransform class on {}: {}", action, clazz.getName(), e);
+        }
+        try {
+            removeRuntimeMock(runtimeAdviceClass, clazz);
+        } catch (ReflectiveOperationException e) {
+            logger.warn("Failed to remove runtime mock for class on {}: {}", action, clazz.getName(), e);
         }
     }
 
@@ -510,6 +494,9 @@ public class MockCommand extends AnnotatedCommand {
     }
 
     public static class OgnlMockAdvice {
+
+        private OgnlMockAdvice() {
+        }
 
         private static final String OGNL_STRICT_FIELD_NAME = "_useStricterInvocation";
         private static final JSONReader.Feature[] AUTO_TYPE_FEATURES = new JSONReader.Feature[] {
@@ -537,15 +524,15 @@ public class MockCommand extends AnnotatedCommand {
         }
 
         public static List<String> describeMocks() {
-            List<String> lines = new ArrayList<String>();
+            List<String> lines = new ArrayList<>();
             for (Map.Entry<Class<?>, Map<String, MockConfig>> classEntry : mockCommands.entrySet()) {
                 String className = classEntry.getKey().getName();
                 for (Map.Entry<String, MockConfig> methodEntry : classEntry.getValue().entrySet()) {
                     MockConfig config = methodEntry.getValue();
                     lines.add(className + "#" + methodEntry.getKey()
-                            + " [before=" + String.valueOf(config.getBeforeOgnl())
-                            + ", after=" + String.valueOf(config.getAfterOgnl())
-                            + ", json=" + String.valueOf(config.getJsonPayload())
+                            + " [before=" + config.getBeforeOgnl()
+                            + ", after=" + config.getAfterOgnl()
+                            + ", json=" + config.getJsonPayload()
                             + ", strict=" + config.isStrict() + "]");
                 }
             }
@@ -720,7 +707,7 @@ public class MockCommand extends AnnotatedCommand {
         }
 
         private static String normalizeJsonAlias(String express) {
-            if (express == null || express.indexOf("#json") < 0) {
+            if (express == null || !express.contains("#json")) {
                 return express;
             }
             StringBuilder builder = new StringBuilder(express.length() + 16);
@@ -782,7 +769,7 @@ public class MockCommand extends AnnotatedCommand {
                 throw new IllegalArgumentException("Unable to resolve reflective method for JSON payload binding");
             }
             int parameterCount = args == null ? -1 : args.length;
-            List<Method> candidates = new ArrayList<Method>();
+            List<Method> candidates = new ArrayList<>();
             for (Method method : clazz.getDeclaredMethods()) {
                 if (!method.isBridge()
                         && !method.isSynthetic()
@@ -948,8 +935,5 @@ public class MockCommand extends AnnotatedCommand {
             return "L" + type.getName().replace('.', '/') + ";";
         }
 
-        private static RuntimeException propagateMockException(Throwable throwable) {
-            return MockCommand.propagateMockException(throwable);
-        }
     }
 }
