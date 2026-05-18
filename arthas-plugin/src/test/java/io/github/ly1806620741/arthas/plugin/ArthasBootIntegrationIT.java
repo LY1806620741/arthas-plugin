@@ -62,6 +62,9 @@ class ArthasBootIntegrationIT {
                     () -> "mock 命令未生效，输出:\n" + attachResult.output);
             Assertions.assertTrue(attachResult.output.contains("mock") && attachResult.output.contains("help mock"),
                     () -> "附着输出中未发现 mock 命令执行痕迹:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("plugin_version")
+                            && attachResult.output.contains("0.0.1"),
+                    () -> "附着输出中未发现 plugin_version banner 信息:\n" + attachResult.output);
 
             String mathGameOutput = waitForText(mathGameLog, STRICT_PROMPT_FRAGMENT, Duration.ofSeconds(20));
             Assertions.assertTrue(mathGameOutput.contains(STRICT_PROMPT_FRAGMENT),

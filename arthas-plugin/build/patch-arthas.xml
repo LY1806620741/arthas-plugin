@@ -51,6 +51,14 @@
                 match="(commandClassList\.add\(StopCommand\.class\);)"
                 replace="\1${line.separator}        commandClassList.add(MockCommand.class);${line.separator}        commandClassList.add(SpringBootCommand.class);"
                 byline="true"/>
+
+        <echo message="add plugin info"/>
+
+        <replaceregexp
+                file="${patched.src.dir}/com/taobao/arthas/core/util/ArthasBanner.java"
+                match="(\.row\(\&quot;main_class\&quot;, PidUtils\.mainClass\(\)\);)"
+                replace=".row(\&quot;main_class\&quot;, PidUtils.mainClass())${line.separator}                        .row(\&quot;plugin_version\&quot;, \&quot;${project.version}\&quot;);"
+                byline="true"/>
     </target>
 </project>
 

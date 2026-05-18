@@ -190,7 +190,8 @@
                                     <includes>
                                         com/taobao/arthas/core/view/ObjectView.java,
                                         com/taobao/arthas/core/command/BuiltinCommandPack.java,
-                                        com/taobao/arthas/core/GlobalOptions.java
+                                        com/taobao/arthas/core/GlobalOptions.java,
+                                        com/taobao/arthas/core/util/ArthasBanner.java
                                     </includes>
                                     <overWrite>true</overWrite>
                                 </artifactItem>
