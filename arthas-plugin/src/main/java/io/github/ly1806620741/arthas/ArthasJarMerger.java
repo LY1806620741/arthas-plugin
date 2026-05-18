@@ -50,23 +50,27 @@ public class ArthasJarMerger {
             return;
         }
 
-        // 只备份一次，存在bak则跳过
         File bakFile = new File(BAK_PATH);
-        if (!bakFile.exists()) {
-            Files.copy(targetJar.toPath(), bakFile.toPath());
-            System.out.println("✅ 备份成功: " + BAK_PATH);
-        } else {
-            targetJar = new File(BAK_PATH); // 使用备份文件以便可以多次合并
-            System.out.println("ℹ️ 备份文件已存在，跳过备份");
-        }
 
         String selfJar = getSelfJarPath();
         if (selfJar == null) {
             System.err.println("❌ 请将本程序打包为jar运行");
             return;
         }
-        mergeClass(targetJar, new File(selfJar));
+        mergeIntoTargetJar(targetJar, bakFile, new File(selfJar));
         System.out.println("✅ 执行完成，Class已合并至原jar包");
+    }
+
+    static void mergeIntoTargetJar(File targetJar, File bakFile, File sourceJar) throws Exception {
+        File baseJar = targetJar;
+        if (!bakFile.exists()) {
+            Files.copy(targetJar.toPath(), bakFile.toPath());
+            System.out.println("✅ 备份成功: " + bakFile.getPath());
+        } else {
+            baseJar = bakFile;
+            System.out.println("ℹ️ 备份文件已存在，将基于备份文件进行合并: " + bakFile.getPath());
+        }
+        mergeClass(baseJar, sourceJar, targetJar);
     }
 
     private static String getSelfJarPath() {
@@ -106,8 +110,8 @@ public class ArthasJarMerger {
         }
     }
 
-    private static void mergeClass(File targetJar, File sourceJar) throws Exception {
-        File tempJar = new File(targetJar.getAbsolutePath() + ".tmp");
+    private static void mergeClass(File baseJar, File sourceJar, File outputJar) throws Exception {
+        File tempJar = new File(outputJar.getAbsolutePath() + ".tmp");
 
         // 1. 先扫描 sourceJar，确定哪些文件是我们要覆盖进去的
         Set<String> sourceEntryNames = new HashSet<>();
@@ -125,7 +129,7 @@ public class ArthasJarMerger {
 
         // 2. 开始构建新的 JAR
         try (JarOutputStream jos = new JarOutputStream(new FileOutputStream(tempJar));
-                JarFile targetJf = new JarFile(targetJar);
+                JarFile targetJf = new JarFile(baseJar);
                 JarFile srcJf = new JarFile(sourceJar)) {
 
             // A. 搬运 targetJar，但跳过那些在 sourceJar 中已存在的文件
@@ -152,8 +156,8 @@ public class ArthasJarMerger {
         }
 
         // 3. 替换原始文件
-        if (targetJar.delete()) {
-            if (!tempJar.renameTo(targetJar)) {
+        if (outputJar.delete()) {
+            if (!tempJar.renameTo(outputJar)) {
                 throw new IOException("重命名临时文件失败");
             }
         } else {
