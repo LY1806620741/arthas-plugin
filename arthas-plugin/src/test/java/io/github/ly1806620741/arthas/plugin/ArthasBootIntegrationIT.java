@@ -33,7 +33,7 @@ import java.util.zip.ZipInputStream;
 
 class ArthasBootIntegrationIT {
 
-    private static final String STRICT_PROMPT_FRAGMENT = "execute `options strict false`";
+    private static final String STRICT_PROMPT_FRAGMENT = "options strict false";
 
     @Test
     @DisplayName("使用 original 插件增强官方 arthas-core 后验证 strict 模式下 mock 给出手动关闭提示")
@@ -56,8 +56,6 @@ class ArthasBootIntegrationIT {
             ProcessResult attachResult = runArthasBootCommand(
                     tempDir, telnetPort, targetPid, mockCommand, tempDir.resolve("attach.log"), Duration.ofSeconds(90));
 
-            Assertions.assertEquals(0, attachResult.exitCode,
-                    () -> "arthas-boot 附着/执行 mock 失败，输出:\n" + attachResult.output);
             Assertions.assertFalse(attachResult.output.contains("command not found"),
                     () -> "mock 命令未生效，输出:\n" + attachResult.output);
             Assertions.assertTrue(attachResult.output.contains("mock") && attachResult.output.contains("help mock"),
@@ -65,10 +63,12 @@ class ArthasBootIntegrationIT {
             Assertions.assertTrue(attachResult.output.matches(
                             "(?s).*plugin_version\\s+0\\.0\\.1 \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} \\+08:00\\).*"),
                     () -> "附着输出中未发现 plugin_version banner 信息:\n" + attachResult.output);
-
-            String mathGameOutput = waitForText(mathGameLog, STRICT_PROMPT_FRAGMENT, Duration.ofSeconds(20));
-            Assertions.assertTrue(mathGameOutput.contains(STRICT_PROMPT_FRAGMENT),
-                    () -> "math-game 输出中未观察到 strict 手动关闭提示:\n" + mathGameOutput);
+            Assertions.assertTrue(attachResult.output.contains(STRICT_PROMPT_FRAGMENT),
+                    () -> "mock 命令未在安装阶段提示关闭 strict:\n" + attachResult.output);
+            Assertions.assertTrue(attachResult.output.contains("mock requires"),
+                    () -> "mock 命令未输出新的 strict 安装失败提示:\n" + attachResult.output);
+            Assertions.assertFalse(attachResult.output.contains("Mock installed."),
+                    () -> "strict=true 时不应继续安装 mock:\n" + attachResult.output);
 
             ProcessResult stopResult = runArthasBootCommand(
                     tempDir, telnetPort, targetPid, "stop", tempDir.resolve("stop.log"), Duration.ofSeconds(60));

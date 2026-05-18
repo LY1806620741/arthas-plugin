@@ -68,13 +68,20 @@ class SpringBootCommandTest {
     }
 
     @BeforeEach
-    void registerApplicationContext() throws Exception {
+    void removeApplicationContextFromLiveBeansView() throws Exception {
         Class<?> liveBeansViewClass = Class.forName("org.springframework.context.support.LiveBeansView");
         Field applicationContextsField = liveBeansViewClass.getDeclaredField("applicationContexts");
         applicationContextsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         Collection<Object> contexts = (Collection<Object>) applicationContextsField.get(null);
-        contexts.add(applicationContext);
+        contexts.remove(applicationContext);
+    }
+
+    @Test
+    @DisplayName("未注册到 LiveBeansView 时也能发现 Spring 上下文")
+    void findApplicationContextsShouldFallbackWithoutLiveBeansViewRegistration() throws Exception {
+        Collection<Object> contexts = SpringHttpProxyInstaller.findApplicationContexts(null);
+        Assertions.assertTrue(contexts.contains(applicationContext), "should discover the running Spring application context");
     }
 
     @Test

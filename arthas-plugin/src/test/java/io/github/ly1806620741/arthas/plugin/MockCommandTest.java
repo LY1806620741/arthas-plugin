@@ -269,6 +269,26 @@ public class MockCommandTest {
     }
 
     @Test
+    @DisplayName("测试 strict=true 时安装 mock 会直接提示先执行 options strict false")
+    void testMockInstallShouldRejectStrictModeBeforeRuntimeFailure() throws Throwable {
+        Instrumentation instrumentation = installInstrumentation();
+        CommandProcess commandProcess = mockCommandProcess(instrumentation);
+
+        MockCommand mockCommand = buildAfterMockCommand(ListTarget.class.getName(), "name", "#this.returnObj=null");
+
+        boolean previousStrict = GlobalOptions.strict;
+        GlobalOptions.strict = true;
+        try {
+            mockCommand.process(commandProcess);
+        } finally {
+            GlobalOptions.strict = previousStrict;
+        }
+
+        Mockito.verify(commandProcess).end(Mockito.eq(-1), Mockito.contains("options strict false"));
+        Assertions.assertEquals("name", new ListTarget().name());
+    }
+
+    @Test
     @DisplayName("测试 -j 支持预载 JSON 数组并通过 OGNL 替换多个入参")
     void testJsonOptionArrayCanBeAssignedToMultipleParameters() throws Throwable {
         Instrumentation instrumentation = installInstrumentation();

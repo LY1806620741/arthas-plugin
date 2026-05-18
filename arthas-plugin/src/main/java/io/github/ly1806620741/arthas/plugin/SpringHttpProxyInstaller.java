@@ -8,6 +8,7 @@ import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -32,6 +33,10 @@ final class SpringHttpProxyInstaller {
 
 	private static final String LIVE_BEANS_VIEW_CLASS = "org.springframework.context.support.LiveBeansView";
 	private static final String APPLICATION_CONTEXTS_FIELD = "applicationContexts";
+	private static final String APPLICATION_CONTEXT_CLASS = "org.springframework.context.ApplicationContext";
+	private static final String SPRING_APPLICATION_CLASS = "org.springframework.boot.SpringApplication";
+	private static final String SPRING_APPLICATION_SHUTDOWN_HOOK_FIELD = "shutdownHook";
+	private static final String SPRING_BOOT_CONTEXTS_FIELD = "contexts";
 	private static final String HANDLER_MAPPING_CLASS =
 			"org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping";
 	private static final String REQUEST_MAPPING_INFO_CLASS =
@@ -63,6 +68,14 @@ final class SpringHttpProxyInstaller {
 
 	static Collection<Object> findApplicationContexts(Instrumentation instrumentation) throws Exception {
 		Set<Object> applicationContexts = new LinkedHashSet<Object>();
+		addApplicationContextsFromLiveBeansView(applicationContexts, instrumentation);
+		addApplicationContextsFromSpringBoot(applicationContexts, instrumentation);
+		addApplicationContextsFromVmTool(applicationContexts, instrumentation);
+		return applicationContexts.isEmpty() ? Collections.<Object>emptyList() : applicationContexts;
+	}
+
+	private static void addApplicationContextsFromLiveBeansView(Set<Object> applicationContexts,
+			Instrumentation instrumentation) throws Exception {
 		for (ClassLoader classLoader : candidateClassLoaders(instrumentation)) {
 			Class<?> liveBeansViewClass = loadClassQuietly(LIVE_BEANS_VIEW_CLASS, classLoader);
 			if (liveBeansViewClass == null) {
@@ -75,7 +88,75 @@ final class SpringHttpProxyInstaller {
 				applicationContexts.addAll((Collection<?>) value);
 			}
 		}
-		return applicationContexts.isEmpty() ? Collections.<Object>emptyList() : applicationContexts;
+	}
+
+	private static void addApplicationContextsFromVmTool(Set<Object> applicationContexts,
+			Instrumentation instrumentation) {
+		try {
+			Class<?> vmToolClass = Class.forName("arthas.VmTool");
+			Object vmTool = vmToolClass.getMethod("getInstance").invoke(null);
+			if (vmTool == null) {
+				return;
+			}
+			Method getAllLoadedClasses = vmToolClass.getMethod("getAllLoadedClasses");
+			Method getInstances = vmToolClass.getMethod("getInstances", Class.class);
+			Object loadedClassesValue = getAllLoadedClasses.invoke(vmTool);
+			if (!(loadedClassesValue instanceof Class[])) {
+				return;
+			}
+			Class<?>[] loadedClasses = (Class<?>[]) loadedClassesValue;
+			for (ClassLoader classLoader : candidateClassLoaders(instrumentation)) {
+				Class<?> applicationContextType = loadClassQuietly(APPLICATION_CONTEXT_CLASS, classLoader);
+				if (applicationContextType == null) {
+					continue;
+				}
+				for (Class<?> loadedClass : loadedClasses) {
+					if (loadedClass == null
+							|| loadedClass.isInterface()
+							|| Modifier.isAbstract(loadedClass.getModifiers())
+							|| !applicationContextType.isAssignableFrom(loadedClass)) {
+						continue;
+					}
+					Object instancesValue = getInstances.invoke(vmTool, loadedClass);
+					if (!(instancesValue instanceof Object[])) {
+						continue;
+					}
+					for (Object instance : (Object[]) instancesValue) {
+						if (instance != null) {
+							applicationContexts.add(instance);
+						}
+					}
+				}
+			}
+		} catch (Throwable ignore) {
+			// vmtool is best-effort fallback for applications not registered in LiveBeansView.
+		}
+	}
+
+	private static void addApplicationContextsFromSpringBoot(Set<Object> applicationContexts,
+			Instrumentation instrumentation) {
+		for (ClassLoader classLoader : candidateClassLoaders(instrumentation)) {
+			Class<?> springApplicationClass = loadClassQuietly(SPRING_APPLICATION_CLASS, classLoader);
+			if (springApplicationClass == null) {
+				continue;
+			}
+			try {
+				Field shutdownHookField = springApplicationClass.getDeclaredField(SPRING_APPLICATION_SHUTDOWN_HOOK_FIELD);
+				shutdownHookField.setAccessible(true);
+				Object shutdownHook = shutdownHookField.get(null);
+				if (shutdownHook == null) {
+					continue;
+				}
+				Field contextsField = shutdownHook.getClass().getDeclaredField(SPRING_BOOT_CONTEXTS_FIELD);
+				contextsField.setAccessible(true);
+				Object value = contextsField.get(shutdownHook);
+				if (value instanceof Collection) {
+					applicationContexts.addAll((Collection<?>) value);
+				}
+			} catch (Throwable ignore) {
+				// Ignore and continue probing other classloaders/fallbacks.
+			}
+		}
 	}
 
 	private static Set<ClassLoader> candidateClassLoaders(Instrumentation instrumentation) {

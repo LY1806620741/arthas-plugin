@@ -91,6 +91,7 @@ public class MockCommand extends AnnotatedCommand {
     private static final String SPRING_CGLIB_MARKER = "$$EnhancerBySpringCGLIB$$";
     private static final String SPRING_CGLIB_MARKER_ALT = "$$SpringCGLIB$$";
     private static final String CGLIB_MARKER = "$$EnhancerByCGLIB$$";
+    private static final String STRICT_DISABLE_HINT = "mock requires `options strict false` before installation when using OGNL/JSON; current strict=true may install successfully but fail at runtime.";
 
     @Argument(index = 0, argName = "class-pattern", required = false)
     @Description("The full qualified class name you want to mock")
@@ -277,6 +278,11 @@ public class MockCommand extends AnnotatedCommand {
                 return;
             }
 
+            if (shouldRejectInstallUnderStrictMode()) {
+                process.end(-1, STRICT_DISABLE_HINT);
+                return;
+            }
+
             Matcher<String> classNameMatcher = SearchUtils.classNameMatcher(classPattern, isRegEx);
             Matcher<String> methodNameMatcher = SearchUtils.classNameMatcher(methodPattern, isRegEx);
 
@@ -450,6 +456,15 @@ public class MockCommand extends AnnotatedCommand {
             }
         }
         return matchedMethods;
+    }
+
+    private boolean shouldRejectInstallUnderStrictMode() {
+        if (!GlobalOptions.strict) {
+            return false;
+        }
+        return !StringUtils.isBlank(beforeOgnl)
+                || !StringUtils.isBlank(afterOgnl)
+                || !StringUtils.isBlank(jsonPayload);
     }
 
     private void clearMock(Instrumentation inst) {
