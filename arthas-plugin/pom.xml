@@ -27,7 +27,7 @@
         <mockito.version>5.21.0</mockito.version>
         <patch.ant.file>${project.basedir}/build/patch-arthas.xml</patch.ant.file>
         <patched.src.dir>${project.build.directory}/patched-src</patched.src.dir>
-        <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss</maven.build.timestamp.format>
+        <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss XXX</maven.build.timestamp.format>
         <plugin.banner.version>${project.version} (${maven.build.timestamp})</plugin.banner.version>
     </properties>
 
