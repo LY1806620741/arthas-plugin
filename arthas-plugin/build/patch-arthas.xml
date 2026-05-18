@@ -57,7 +57,7 @@
         <replaceregexp
                 file="${patched.src.dir}/com/taobao/arthas/core/util/ArthasBanner.java"
                 match="(\.row\(\&quot;main_class\&quot;, PidUtils\.mainClass\(\)\);)"
-                replace=".row(\&quot;main_class\&quot;, PidUtils.mainClass())${line.separator}                        .row(\&quot;plugin_version\&quot;, \&quot;${plugin.banner.version}\&quot;);"
+                replace=".row(\&quot;main_class\&quot;, PidUtils.mainClass())${line.separator}                        .row(\&quot;plugin_version\&quot;, \&quot;${project.version} (${plugin.build.timestamp})\&quot;);"
                 byline="true"/>
     </target>
 </project>

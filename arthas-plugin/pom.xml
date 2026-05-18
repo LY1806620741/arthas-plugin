@@ -27,8 +27,7 @@
         <mockito.version>5.21.0</mockito.version>
         <patch.ant.file>${project.basedir}/build/patch-arthas.xml</patch.ant.file>
         <patched.src.dir>${project.build.directory}/patched-src</patched.src.dir>
-        <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss XXX</maven.build.timestamp.format>
-        <plugin.banner.version>${project.version} (${maven.build.timestamp})</plugin.banner.version>
+        <plugin.banner.version>${project.version} (${plugin.build.timestamp})</plugin.banner.version>
     </properties>
 
     <dependencies>
@@ -270,6 +269,18 @@
                 <artifactId>build-helper-maven-plugin</artifactId>
                 <version>${build.helper.plugin.version}</version>
                 <executions>
+                    <execution>
+                        <id>plugin-build-timestamp</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>timestamp-property</goal>
+                        </goals>
+                        <configuration>
+                            <name>plugin.build.timestamp</name>
+                            <pattern>yyyy-MM-dd HH:mm:ss XXX</pattern>
+                            <timeZone>GMT+08:00</timeZone>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>add-patched-src</id>
                         <phase>generate-sources</phase>
