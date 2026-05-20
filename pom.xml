@@ -6,12 +6,13 @@
 
     <groupId>io.github.ly1806620741</groupId>
     <artifactId>arthas-plugin-parent</artifactId>
-    <version>0.0.1</version>
+    <version>${revision}</version>
     <packaging>pom</packaging> <!-- 聚合工程 -->
     <name>arthas-plugin-parent</name>
     <url>https://github.com/LY1806620741/arthas-plugin</url>
 
     <properties>
+        <revision>0.0.1</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>

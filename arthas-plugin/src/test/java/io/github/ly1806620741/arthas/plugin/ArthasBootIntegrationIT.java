@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -61,7 +62,8 @@ class ArthasBootIntegrationIT {
             Assertions.assertTrue(attachResult.output.contains("mock") && attachResult.output.contains("help mock"),
                     () -> "附着输出中未发现 mock 命令执行痕迹:\n" + attachResult.output);
             Assertions.assertTrue(attachResult.output.matches(
-                            "(?s).*plugin_version\\s+0\\.0\\.1 \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} \\+08:00\\).*"),
+                            "(?s).*plugin_version\\s+" + Pattern.quote(artifact.pluginVersion)
+                                    + " \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} \\+08:00\\).*"),
                     () -> "附着输出中未发现 plugin_version banner 信息:\n" + attachResult.output);
             Assertions.assertTrue(attachResult.output.contains(STRICT_PROMPT_FRAGMENT),
                     () -> "mock 命令未在安装阶段提示关闭 strict:\n" + attachResult.output);
@@ -339,11 +341,21 @@ class ArthasBootIntegrationIT {
                     () -> "增强 arthas-core.jar 失败，输出:\n" + mergeResult.output);
             Assertions.assertTrue(mergeResult.output.contains("执行完成") || mergeResult.output.contains("Class已合并"),
                     () -> "增强输出不符合预期:\n" + mergeResult.output);
-            return new PreparedArtifact(moduleDir, tempDir, tempDir.resolve("arthas-core.jar"));
+            return new PreparedArtifact(moduleDir, tempDir, tempDir.resolve("arthas-core.jar"), resolvePluginVersion(originalPluginJar));
         } catch (Throwable throwable) {
             deleteRecursively(tempDir);
             throw throwable;
         }
+    }
+
+    private static String resolvePluginVersion(Path pluginJar) {
+        String fileName = pluginJar.getFileName().toString();
+        String prefix = "arthas-plugin-";
+        String suffix = ".jar";
+        if (!fileName.startsWith(prefix) || !fileName.endsWith(suffix)) {
+            throw new IllegalStateException("无法从插件制品文件名解析版本: " + fileName);
+        }
+        return fileName.substring(prefix.length(), fileName.length() - suffix.length());
     }
 
     private static Path moduleDir() {
@@ -721,11 +733,13 @@ class ArthasBootIntegrationIT {
         private final Path moduleDir;
         private final Path tempDir;
         private final Path enhancedCoreJar;
+        private final String pluginVersion;
 
-        private PreparedArtifact(Path moduleDir, Path tempDir, Path enhancedCoreJar) {
+        private PreparedArtifact(Path moduleDir, Path tempDir, Path enhancedCoreJar, String pluginVersion) {
             this.moduleDir = moduleDir;
             this.tempDir = tempDir;
             this.enhancedCoreJar = enhancedCoreJar;
+            this.pluginVersion = pluginVersion;
         }
     }
 

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project name="patch-arthas">
     <target name="patch-arthas-sources">
+        <property name="plugin.banner.version.resolved" value="${project.version} (${plugin.build.timestamp})"/>
+
         <!-- 1. 插入 jacoco 过滤 -->
         <echo message="add jacoco filter"/>
 
@@ -57,7 +59,7 @@
         <replaceregexp
                 file="${patched.src.dir}/com/taobao/arthas/core/util/ArthasBanner.java"
                 match="(\.row\(\&quot;main_class\&quot;, PidUtils\.mainClass\(\)\);)"
-                replace=".row(\&quot;main_class\&quot;, PidUtils.mainClass())${line.separator}                        .row(\&quot;plugin_version\&quot;, \&quot;${project.version} (${plugin.build.timestamp})\&quot;);"
+                replace=".row(\&quot;main_class\&quot;, PidUtils.mainClass())${line.separator}                        .row(\&quot;plugin_version\&quot;, \&quot;${plugin.banner.version.resolved}\&quot;);"
                 byline="true"/>
     </target>
 </project>

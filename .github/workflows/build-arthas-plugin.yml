@@ -49,29 +49,42 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Verify Project with Maven
-        run: mvn -B -ntp -pl arthas-plugin clean verify
-
-      - name: Prepare release metadata
+      - name: Prepare build and release metadata
         id: release_meta
         shell: bash
         run: |
           should_release="false"
           release_tag=""
           release_name=""
+          pom_revision="$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          root = ET.parse('pom.xml').getroot()
+          revision = root.findtext('m:properties/m:revision', namespaces=ns)
+          print((revision or '').strip())
+          PY
+          )"
+          maven_revision="$pom_revision"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             should_release="true"
             release_tag="${GITHUB_REF_NAME}"
             release_name="${GITHUB_REF_NAME}"
+            maven_revision="${GITHUB_REF_NAME#v}"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish_release }}" == "true" ]]; then
             should_release="true"
             release_tag="${{ inputs.release_tag }}"
             release_name="${{ inputs.release_name }}"
+            maven_revision="${release_tag#v}"
           fi
 
           if [[ "$should_release" == "true" && -z "$release_tag" ]]; then
             echo "Manual release requires 'release_tag' input." >&2
+            exit 1
+          fi
+
+          if [[ -z "$maven_revision" ]]; then
+            echo "Failed to resolve Maven revision." >&2
             exit 1
           fi
 
@@ -82,6 +95,10 @@ jobs:
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+          echo "maven_revision=$maven_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Project with Maven
+        run: mvn -B -ntp -Drevision="${{ steps.release_meta.outputs.maven_revision }}" -pl arthas-plugin clean verify
 
       - name: Generate SHA256 checksum files
         shell: bash

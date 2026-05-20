@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.ly1806620741</groupId>
         <artifactId>arthas-plugin-parent</artifactId>
-        <version>0.0.1</version>
+        <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
